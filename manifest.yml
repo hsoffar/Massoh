@@ -1,0 +1,45 @@
+# manifest.yml — what `massoh install` writes into ~/.claude (for status + clean uninstall)
+# version: 1
+#
+# Everything Massoh adds to the LIVE global config (~/.claude) is namespaced + listed here so
+# `massoh status` can verify it and `massoh uninstall` can remove EXACTLY what was added — after a
+# timestamped backup. Massoh never edits the user's own agents/skills, only its own `massoh-*` ones.
+
+version: 1
+namespace: massoh
+
+global_install:
+  # the only always-read surface: a delimited, marker-gated block appended to ~/.claude/CLAUDE.md
+  - kind: block
+    file: ~/.claude/CLAUDE.md
+    markers: ["<!-- massoh:start", "<!-- massoh:end -->"]
+    source: templates/CLAUDE.global-block.md
+  # agents: copied (or symlinked) as massoh-*.md so they never clobber the user's own agents
+  - kind: glob
+    dest: ~/.claude/agents/
+    pattern: massoh-*.md
+    source: claude/agents/
+  # skills: copied/symlinked under their own names (start-task, sync, close-task, history-cleanup)
+  - kind: dir
+    dest: ~/.claude/skills/
+    source: claude/skills/
+    owns: [start-task, sync, close-task, history-cleanup]
+  # the engine the agents read on demand
+  - kind: dir
+    dest: ~/.claude/agent-os/
+    source: .            # OPERATING_SYSTEM.md + policies/ + templates/ + docs/
+
+# Per-repo scaffold created by `massoh on` (NEVER overwritten — created only if missing):
+project_scaffold:
+  marker: .massoh                                   # presence = "this repo is a Massoh project"
+  create_if_missing:
+    - { dest: CLAUDE.md,                 source: templates/CLAUDE.project.template.md }
+    - { dest: agent-project/CHARTER.md,          source: templates/CHARTER.template.md }
+    - { dest: agent-project/NON_NEGOTIABLES.md,  source: templates/NON_NEGOTIABLES.template.md }
+    - { dest: agent-project/PRODUCT_STRATEGY.md, source: templates/PRODUCT_STRATEGY.template.md }
+    - { dest: agent-project/NOW_NEXT_LATER.md,   source: templates/NOW_NEXT_LATER.template.md }
+    - { dest: agent-project/METRICS.md,          source: templates/METRICS.template.md }
+    - { dest: AGENT_SYNC.md,             source: templates/AGENT_SYNC.skeleton.md }
+    - { dest: AGENT_BACKLOG.md,          source: templates/AGENT_BACKLOG.skeleton.md }
+    - { dest: memory/SCHEMA.md,          source: templates/MEMORY_SCHEMA.md }
+    - { dest: .agent_tasks/.gitkeep,     source: null }

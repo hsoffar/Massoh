@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# massoh — install/toggle/update the Massoh agent operating system.
+# Global install lives in ~/.claude (override with CLAUDE_CONFIG_DIR). Everything Massoh writes is
+# namespaced (massoh-*) and backed up before any change. See manifest.yml.
+set -euo pipefail
+
+# --- locate the Massoh repo (this script lives in <repo>/bin) ---
+SELF="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+MASSOH_HOME="${MASSOH_HOME:-$SELF}"
+CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+BLOCK_START="<!-- massoh:start"
+BLOCK_END="<!-- massoh:end -->"
+LINK=0   # default: copy (safe). --link to symlink into the clone (live updates).
+
+say()  { printf '%s\n' "$*"; }
+die()  { printf 'massoh: %s\n' "$*" >&2; exit 1; }
+
+backup_claude() {
+  [ -d "$CLAUDE_DIR" ] || return 0
+  local b="$CLAUDE_DIR/.massoh-backups/$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$b"
+  [ -f "$CLAUDE_DIR/CLAUDE.md" ] && cp -p "$CLAUDE_DIR/CLAUDE.md" "$b/CLAUDE.md" || true
+  [ -d "$CLAUDE_DIR/agents" ]   && cp -rp "$CLAUDE_DIR/agents"  "$b/agents"  2>/dev/null || true
+  [ -d "$CLAUDE_DIR/skills" ]   && cp -rp "$CLAUDE_DIR/skills"  "$b/skills"  2>/dev/null || true
+  say "  backup → $b"
+}
+
+wire() {  # wire <src> <dest>  (copy, or symlink if --link)
+  local src="$1" dest="$2"
+  mkdir -p "$(dirname "$dest")"
+  rm -rf "$dest"
+  if [ "$LINK" = 1 ]; then ln -s "$src" "$dest"; else cp -rp "$src" "$dest"; fi
+}
+
+block_present() { [ -f "$CLAUDE_DIR/CLAUDE.md" ] && grep -qF "$BLOCK_START" "$CLAUDE_DIR/CLAUDE.md"; }
+
+add_block() {
+  mkdir -p "$CLAUDE_DIR"
+  touch "$CLAUDE_DIR/CLAUDE.md"
+  block_present && return 0
+  printf '\n' >> "$CLAUDE_DIR/CLAUDE.md"
+  cat "$MASSOH_HOME/templates/CLAUDE.global-block.md" >> "$CLAUDE_DIR/CLAUDE.md"
+  say "  global block added → $CLAUDE_DIR/CLAUDE.md"
+}
+
+remove_block() {
+  [ -f "$CLAUDE_DIR/CLAUDE.md" ] || return 0
+  block_present || return 0
+  awk -v s="$BLOCK_START" -v e="$BLOCK_END" '
+    index($0,s){skip=1} !skip{print} index($0,e){skip=0}' \
+    "$CLAUDE_DIR/CLAUDE.md" > "$CLAUDE_DIR/CLAUDE.md.tmp"
+  mv "$CLAUDE_DIR/CLAUDE.md.tmp" "$CLAUDE_DIR/CLAUDE.md"
+  say "  global block removed"
+}
+
+cmd_install() {
+  say "massoh install → $CLAUDE_DIR  (mode: $([ "$LINK" = 1 ] && echo symlink || echo copy))"
+  backup_claude
+  mkdir -p "$CLAUDE_DIR/agents" "$CLAUDE_DIR/skills" "$CLAUDE_DIR/agent-os"
+  # agents (namespaced massoh-*)
+  for f in "$MASSOH_HOME"/claude/agents/massoh-*.md; do wire "$f" "$CLAUDE_DIR/agents/$(basename "$f")"; done
+  # skills (owned names)
+  for d in "$MASSOH_HOME"/claude/skills/*/; do wire "${d%/}" "$CLAUDE_DIR/skills/$(basename "$d")"; done
+  # engine (read on demand)
+  for p in OPERATING_SYSTEM.md policies templates docs manifest.yml; do
+    [ -e "$MASSOH_HOME/$p" ] && wire "$MASSOH_HOME/$p" "$CLAUDE_DIR/agent-os/$p"; done
+  add_block
+  say "done. enabled globally; dormant until a repo opts in (massoh on)."
+}
+
+cmd_update() {
+  say "massoh update"
+  git -C "$MASSOH_HOME" pull --ff-only
+  cmd_install
+}
+
+cmd_enable()  { say "massoh enable";  add_block;    say "done."; }
+cmd_disable() { say "massoh disable"; backup_claude; remove_block; say "done. team dormant everywhere (files kept)."; }
+
+# per-repo scaffold (create-if-missing; mirrors manifest.yml project_scaffold)
+cmd_on() {
+  local repo="${1:-$PWD}"; cd "$repo"
+  say "massoh on → $repo"
+  mkdir -p agent-project memory .agent_tasks
+  scaffold CLAUDE.md                          templates/CLAUDE.project.template.md
+  scaffold agent-project/CHARTER.md           templates/CHARTER.template.md
+  scaffold agent-project/NON_NEGOTIABLES.md   templates/NON_NEGOTIABLES.template.md
+  scaffold agent-project/PRODUCT_STRATEGY.md  templates/PRODUCT_STRATEGY.template.md
+  scaffold agent-project/NOW_NEXT_LATER.md    templates/NOW_NEXT_LATER.template.md
+  scaffold agent-project/METRICS.md           templates/METRICS.template.md
+  scaffold AGENT_SYNC.md                      templates/AGENT_SYNC.skeleton.md
+  scaffold AGENT_BACKLOG.md                   templates/AGENT_BACKLOG.skeleton.md
+  scaffold memory/SCHEMA.md                   templates/MEMORY_SCHEMA.md
+  [ -f memory/MEMORY.md ] || printf '# Memory index\n' > memory/MEMORY.md
+  [ -f .agent_tasks/.gitkeep ] || : > .agent_tasks/.gitkeep
+  printf 'massoh project marker — remove with `massoh off`\n' > .massoh
+  say "done. fill in agent-project/*. This repo now engages the agent workflow."
+}
+scaffold() {  # scaffold <dest> <template>  (never overwrite)
+  if [ -e "$1" ]; then say "  keep   $1 (exists)"; else cp "$MASSOH_HOME/$2" "$1"; say "  create $1"; fi
+}
+
+cmd_off() { rm -f "${1:-$PWD}/.massoh"; say "massoh off — repo dormant (files kept)."; }
+
+cmd_status() {
+  say "Massoh status"
+  say "  repo:    $MASSOH_HOME ($(git -C "$MASSOH_HOME" rev-parse --short HEAD 2>/dev/null || echo '?'))"
+  say "  global:  $([ -d "$CLAUDE_DIR/agent-os" ] && echo installed || echo 'not installed') @ $CLAUDE_DIR"
+  say "  engaged: $(block_present && echo 'enabled (block present)' || echo 'disabled (no block)')"
+  local n; n=$(ls "$CLAUDE_DIR"/agents/massoh-*.md 2>/dev/null | wc -l | tr -d ' ')
+  say "  agents:  ${n} massoh-* installed"
+  say "  here:    $([ -e "$PWD/.massoh" ] || [ -d "$PWD/agent-project" ] && echo 'ON (this repo is a Massoh project)' || echo 'off')"
+}
+
+cmd_work() { local r="${1:?usage: massoh work <repo>}"; cd "$r"; exec "${MASSOH_CLAUDE:-claude}"; }
+
+cmd_uninstall() {
+  say "massoh uninstall"
+  backup_claude
+  rm -f "$CLAUDE_DIR"/agents/massoh-*.md
+  for s in start-task sync close-task history-cleanup; do rm -rf "$CLAUDE_DIR/skills/$s"; done
+  rm -rf "$CLAUDE_DIR/agent-os"
+  remove_block
+  say "done. removed global footprint (backup kept; per-repo agent-project/ left untouched)."
+}
+
+# --- args ---
+for a in "$@"; do [ "$a" = "--link" ] && LINK=1; done
+cmd="${1:-status}"; [ "$cmd" = "--link" ] && cmd="${2:-status}"
+case "$cmd" in
+  install)   cmd_install ;;
+  update)    cmd_update ;;
+  on|init)   shift || true; cmd_on "${1:-$PWD}" ;;
+  off)       shift || true; cmd_off "${1:-$PWD}" ;;
+  enable)    cmd_enable ;;
+  disable)   cmd_disable ;;
+  status)    cmd_status ;;
+  work)      shift; cmd_work "${1:-}" ;;
+  uninstall) cmd_uninstall ;;
+  *) die "unknown command '$cmd'. verbs: install update on off enable disable status work uninstall [--link]" ;;
+esac

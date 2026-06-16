@@ -1,0 +1,4 @@
+# Massoh repo ignores
+.massoh-backups/
+*.tmp
+.DS_Store
