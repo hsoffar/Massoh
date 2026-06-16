@@ -239,6 +239,72 @@ cmd_review() {
   fi
 }
 
+# standup — the progress-delta "ceremony": what moved since last tick (read-only + optional sync append).
+cmd_standup() {
+  local since=1 write=1
+  while [ $# -gt 0 ]; do case "$1" in --since) shift; since="${1:-1}";; --no-write) write=0;; *) die "unknown standup flag: $1";; esac; shift; done
+  local repo; repo="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || pwd)"
+  local ts; ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local commits="(none)" doing="(none)" blocked="(none)" inflight="(none)" d
+  if git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+    commits="$(git -C "$repo" log --since="$since days ago" --pretty='%h %s' 2>/dev/null | sed 's/^/    - /')"; [ -z "$commits" ] && commits="    (none)"
+  fi
+  local bl="$repo/AGENT_BACKLOG.md"
+  if [ -f "$bl" ]; then
+    doing="$(grep -E '\| DOING \|' "$bl" | sed -E 's/^/    -/; s/\|/ /g' || true)"; [ -z "$doing" ] && doing="    (none)"
+    blocked="$(grep -E '\| BLOCKED \|' "$bl" | sed -E 's/^/    -/; s/\|/ /g' || true)"; [ -z "$blocked" ] && blocked="    (none)"
+  fi
+  if [ -d "$repo/.agent_tasks" ]; then
+    inflight=""; for d in "$repo"/.agent_tasks/TASK-*/; do [ -d "$d" ] || continue
+      [ -f "${d}04_implementation_packet.md" ] && [ ! -f "${d}06_review_result.md" ] && inflight="$inflight    - $(basename "$d")"$'\n'; done
+    [ -z "$inflight" ] && inflight="    (none)" || inflight="${inflight%$'\n'}"
+  fi
+  local report="massoh standup — $ts  (since ${since}d)
+  commits:
+$commits
+  DOING:
+$doing
+  BLOCKED:
+$blocked
+  in-flight packets (licensed, unreviewed):
+$inflight"
+  say "$report"
+  if [ "$write" = 1 ] && [ -f "$repo/AGENT_SYNC.md" ]; then
+    { printf '\n## [standup] %s\n' "$ts"; printf '%s\n' "$report" | sed '1d; s/^  /- /; s/^    /  /'; } >> "$repo/AGENT_SYNC.md"
+    say "  → appended to AGENT_SYNC.md"
+  fi
+}
+
+# plan — the planning "ceremony": prioritized queue + surface owner decisions (read-only + optional append).
+cmd_plan() {
+  local write=1
+  while [ $# -gt 0 ]; do case "$1" in --no-write) write=0;; *) die "unknown plan flag: $1";; esac; shift; done
+  local repo; repo="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || pwd)"
+  local ts; ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local queue="(none)" decisions="(none)" blocked="(none)"
+  local bl="$repo/AGENT_BACKLOG.md"
+  if [ -f "$bl" ]; then
+    queue="$(awk -F'|' '/^\|/{st=$6;gsub(/^[ \t]+|[ \t]+$/,"",st); if(st=="TODO"){pr=$3;it=$4;gsub(/^[ \t]+|[ \t]+$/,"",pr);gsub(/^[ \t]+|[ \t]+$/,"",it);print "    - ["pr"] "it}}' "$bl")"; [ -z "$queue" ] && queue="    (none)"
+    blocked="$(grep -E '\| BLOCKED \|' "$bl" | sed -E 's/^/    -/; s/\|/ /g' || true)"; [ -z "$blocked" ] && blocked="    (none)"
+  fi
+  local sy="$repo/AGENT_SYNC.md"
+  if [ -f "$sy" ]; then
+    decisions="$(awk '/^## Open questions/{f=1;next} /^## /{f=0} f && /^\| / && $0 !~ /Question|^\|-|---/ {print "    -"$0}' "$sy" | sed 's/|/ /g')"; [ -z "$decisions" ] && decisions="    (none open)"
+  fi
+  local report="massoh plan — $ts
+  queue (top = next):
+$queue
+  owner decisions needed:
+$decisions
+  BLOCKED:
+$blocked"
+  say "$report"
+  if [ "$write" = 1 ] && [ -f "$sy" ]; then
+    { printf '\n## [plan] %s\n' "$ts"; printf '%s\n' "$report" | sed '1d; s/^  /- /; s/^    /  /'; } >> "$sy"
+    say "  → appended to AGENT_SYNC.md"
+  fi
+}
+
 # cron — the autonomous loop runner (separate script; safe-by-default: dry-run, no auto-merge).
 cmd_cron() { exec "$MASSOH_HOME/bin/massoh-cron" "$@"; }
 
@@ -268,9 +334,11 @@ case "$cmd" in
   doctor)    shift || true; cmd_doctor "$@" ;;
   discover)  shift || true; cmd_discover "$@" ;;
   review)    shift || true; cmd_review "$@" ;;
+  standup)   shift || true; cmd_standup "$@" ;;
+  plan)      shift || true; cmd_plan "$@" ;;
   cron)      shift || true; cmd_cron "$@" ;;
   version|--version|-v) cmd_version ;;
   work)      shift; cmd_work "${1:-}" ;;
   uninstall) cmd_uninstall ;;
-  *) die "unknown command '$cmd'. verbs: install update on off enable disable status doctor discover review cron version work uninstall [--link]" ;;
+  *) die "unknown command '$cmd'. verbs: install update on off enable disable status doctor discover review standup plan cron version work uninstall [--link]" ;;
 esac

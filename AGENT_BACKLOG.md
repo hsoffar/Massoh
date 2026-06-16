@@ -22,7 +22,7 @@ re-syncs `AGENT_SYNC.md`. Full rules: `~/.claude/agent-os/docs/AUTONOMOUS_CRON.m
 ## Queue (top = next)
 | # | Pri | Item | Why | Status |
 |---|-----|------|-----|--------|
-| 1 | P1 | **v0.4 cadence / ceremonies** — `standup` (DOING/DONE/BLOCKED delta) · `review` (KPI report → METRICS) · `plan` (re-rank + surface decisions) · retro→memory; cron-driven | Owner: a sense of time — progress revisited, KPIs gathered, decisions taken. Subsumes `massoh report`. | TODO |
+| 1 | P1 | Wire cadence into `cron` (tick → `standup`; period → `review` + `plan`) | Finish v0.4 — scheduled, unattended ceremonies | TODO |
 | 2 | P1 | Enforce license-to-code gate (pre-commit/pre-push + CI) | The one hard gate is honor-system today; make it mechanical | TODO |
 | 3 | P2 | Emit `AGENTS.md` from the 6 roles | Multi-harness portability (Cursor/Codex/Antigravity) | TODO |
 | 4 | P3 | Profiles + single `config.yml` | Project archetypes; consolidate config | TODO |
@@ -32,6 +32,7 @@ re-syncs `AGENT_SYNC.md`. Full rules: `~/.claude/agent-os/docs/AUTONOMOUS_CRON.m
 ## Done (newest first — kept, never deleted)
 | Pri | Item | PR | Date |
 |---|---|---|---|
+| P1 | v0.4 cadence ceremonies — `review` + `standup` + `plan` (KPIs, progress delta, queue+decisions) | #6 + this | 2026-06-16 |
 | P1 | `massoh cron` — autonomous parallel worktree loop runner (safe-by-default) | #4 → main `1f02151` | 2026-06-16 |
 | P1 | Version stamp (`massoh version`) + `doctor` update-check + `CHANGELOG.md` | TASK-version-notify (branch, pending merge) | 2026-06-16 |
 | P1 | `massoh discover` + `STANDARDS.md` layer (wired into implementer/reviewer) | TASK-massoh-cli-verbs (branch, pending merge) | 2026-06-16 |

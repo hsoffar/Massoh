@@ -190,6 +190,36 @@ check "review append-only (2 snapshots)"       "[ \"\$(grep -c '## Snapshot' '$R
 NG="$TMP/nongit"; mkdir -p "$NG"
 if ( cd "$NG" && "$MASSOH" review --no-write >/dev/null 2>&1 ); then ok "review degrades outside git repo"; else bad "review degrades outside git repo"; fi
 
+echo "== T9: standup + plan =="
+CV="$TMP/cadrepo"; mkdir -p "$CV"; ( cd "$CV" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+{ echo "| # | Pri | Item | Why | Status |"; echo "|---|---|---|---|---|"
+  echo "| 1 | P1 | Top thing | because | TODO |"; echo "| 2 | P2 | Doing thing | x | DOING |"; echo "| 3 | P3 | Stuck thing | y | BLOCKED |"; } > "$CV/AGENT_BACKLOG.md"
+{ echo "# AGENT_SYNC"; echo; echo "## Open questions (owner decision needed)"; echo "| Question | Raised | Context |"; echo "|---|---|---|"; echo "| Should we ship X? | 2026-06-16 | needs call |"; echo; echo "## Decision log"; } > "$CV/AGENT_SYNC.md"
+mkdir -p "$CV/.agent_tasks/TASK-x"; : > "$CV/.agent_tasks/TASK-x/04_implementation_packet.md"   # in-flight (no 06)
+( cd "$CV" && echo a > f && git add -A && git commit -qm "feat: seed cadence" )
+# standup
+so="$( cd "$CV" && "$MASSOH" standup --no-write 2>&1 )"
+check "standup shows recent commit"          "echo '$so' | grep -q 'seed cadence'"
+check "standup shows DOING"                   "echo '$so' | grep -q 'Doing thing'"
+check "standup shows BLOCKED"                 "echo '$so' | grep -q 'Stuck thing'"
+check "standup shows in-flight packet"        "echo '$so' | grep -q 'TASK-x'"
+b9="$(cd "$CV" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+( cd "$CV" && "$MASSOH" standup --no-write >/dev/null 2>&1 )
+a9="$(cd "$CV" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+check "standup --no-write inert"              "[ '$b9' = '$a9' ]"
+( cd "$CV" && "$MASSOH" standup >/dev/null 2>&1 )
+check "standup appends [standup] block"       "grep -q '## \[standup\]' '$CV/AGENT_SYNC.md'"
+# plan
+po="$( cd "$CV" && "$MASSOH" plan --no-write 2>&1 )"
+check "plan shows TODO queue item"            "echo '$po' | grep -q 'Top thing'"
+check "plan surfaces owner decision"          "echo '$po' | grep -q 'Should we ship X'"
+check "plan shows BLOCKED"                     "echo '$po' | grep -q 'Stuck thing'"
+( cd "$CV" && "$MASSOH" plan >/dev/null 2>&1 )
+check "plan appends [plan] block"             "grep -q '## \[plan\]' '$CV/AGENT_SYNC.md'"
+# degrade in non-git
+NG2="$TMP/nongit2"; mkdir -p "$NG2"
+if ( cd "$NG2" && "$MASSOH" standup --no-write >/dev/null 2>&1 && "$MASSOH" plan --no-write >/dev/null 2>&1 ); then ok "standup/plan degrade outside git"; else bad "standup/plan degrade outside git"; fi
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]
