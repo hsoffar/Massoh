@@ -86,6 +86,29 @@ check "uninstall removed engine"             "[ ! -d '$CC5/agent-os' ]"
 check "uninstall removed agents"             "! ls '$CC5'/agents/massoh-*.md >/dev/null 2>&1"
 check "uninstall removed global block"       "! grep -qF 'massoh:start' '$CC5/CLAUDE.md'"
 
+echo "== T6: version + doctor update-check =="
+vout="$("$MASSOH" version 2>&1)"
+check "version prints semver"                "echo '$vout' | grep -qE '^massoh [0-9]+\.[0-9]+'"
+# build a clone that is BEHIND origin/main, with the new binary, then doctor must flag 'update available'
+B6="$TMP/bare6.git"; git clone -q --bare "$REPO_ROOT" "$B6"
+W6="$TMP/w6"; git clone -q "$B6" "$W6"; ( cd "$W6" && git config user.email t@t && git config user.name t )
+cp "$MASSOH" "$W6/bin/massoh"; cp "$REPO_ROOT/VERSION" "$W6/VERSION"   # overlay uncommitted working-tree files
+A6="$TMP/a6"; git clone -q "$B6" "$A6"; ( cd "$A6" && git config user.email t@t && git config user.name t )
+( cd "$A6" && git checkout -q main && echo z >> README.md && git commit -qam "advance main" && git push -q origin main )
+CC6="$(newcc)"; MASSOH_HOME="$W6" CLAUDE_CONFIG_DIR="$CC6" "$W6/bin/massoh" install >/dev/null 2>&1
+check "install wrote VERSION into engine"    "[ -f '$CC6/agent-os/VERSION' ]"
+d6="$(MASSOH_HOME="$W6" CLAUDE_CONFIG_DIR="$CC6" "$W6/bin/massoh" doctor 2>&1)"; rc6=$?
+check "doctor exit 0 even when behind"        "[ $rc6 -eq 0 ]"
+check "doctor flags 'update available'"       "echo '$d6' | grep -q 'update available'"
+# offline-safe: bogus remote + --offline must not hang or fail
+( cd "$W6" && git remote set-url origin /no/such/remote )
+d6o="$(MASSOH_HOME="$W6" CLAUDE_CONFIG_DIR="$CC6" "$W6/bin/massoh" doctor --offline 2>&1)"; rc6o=$?
+check "doctor --offline exit 0 (no network)"  "[ $rc6o -eq 0 ]"
+check "doctor --offline skips update-check"    "! echo '$d6o' | grep -q 'update available'"
+# uninstall removes VERSION (agent-os wiped)
+MASSOH_HOME="$W6" CLAUDE_CONFIG_DIR="$CC6" "$W6/bin/massoh" uninstall >/dev/null 2>&1
+check "uninstall removed VERSION"             "[ ! -f '$CC6/agent-os/VERSION' ]"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]

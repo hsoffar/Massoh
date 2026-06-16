@@ -11,14 +11,14 @@ v0.1 post-extraction — validate that a portable, gated agent OS reduces build-
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-TASK-2026-06-16-massoh-cli-verbs — **DONE, awaiting owner merge.** Full gate cleared:
-product-scope BUILD(01) → arch/safety CONDITIONAL YES(03) → owner sign-off → implement(05) →
-reviewer APPROVE(06). Branch `feat/massoh-cli-verbs`, **21/21 tests green, uncommitted.**
+TASK-2026-06-16-massoh-version-notify — **DONE, awaiting owner merge.** version stamp + `doctor`
+update-check + CHANGELOG. Gate cleared 01→03→04→05→06 (owner pre-authorized). Branch
+`feat/massoh-version-notify`, **28/28 tests green.** (Prior TASK-massoh-cli-verbs merged: PR #1 → `778e06a`.)
 
 ## Open questions (owner decision needed)
 | Question | Raised | Context |
 |---|---|---|
-| Commit branch + open PR / merge `feat/massoh-cli-verbs`? | 2026-06-16 | All-green, additive, dark-by-default; reviewer recommends merge |
+| Merge `feat/massoh-version-notify` + `massoh install` (clears expected VERSION drift)? | 2026-06-16 | All-green, additive |
 
 ## Decision log (append-only — never delete a row)
 | Date | Decision | By |
@@ -30,6 +30,8 @@ reviewer APPROVE(06). Branch `feat/massoh-cli-verbs`, **21/21 tests green, uncom
 | 2026-06-16 | **Owner SIGNED OFF** on editing `bin/massoh` — build all 3 → `04` license issued | owner |
 | 2026-06-16 | Implemented `discover`+`doctor`+`update` harden + STANDARDS template + tests; 21/21 green | implementer |
 | 2026-06-16 | Review **APPROVE** (pending owner merge) — no scope creep, safety conditions held | reviewer-qa |
+| 2026-06-16 | **Merged PR #1** (discover/doctor/update) → main `778e06a`; deployed via `massoh install` | owner |
+| 2026-06-16 | TASK-version-notify: BUILD→APPROVE — version stamp + doctor update-check + CHANGELOG, 28/28 green | product-scope/impl/reviewer |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -37,14 +39,15 @@ None.
 ## Active task packets
 | Task ID | Stage | Status |
 |---|---|---|
-| TASK-2026-06-16-massoh-cli-verbs | 06 review APPROVE | DONE — awaiting owner merge |
+| TASK-2026-06-16-massoh-cli-verbs | merged | DONE — PR #1 → main `778e06a` |
+| TASK-2026-06-16-massoh-version-notify | 06 review APPROVE | DONE — awaiting owner merge |
 
 ## Last handoff
 ```
 Agent: massoh-reviewer-qa
 Mode: REVIEW_QA
-Task: TASK-2026-06-16-massoh-cli-verbs (discover + doctor + update harden)
-Status: APPROVE — 21/21 tests green, scope clean, safety conditions held; uncommitted on branch
+Task: TASK-2026-06-16-massoh-version-notify (version stamp + doctor update-check + CHANGELOG)
+Status: APPROVE — 28/28 tests green, manifest↔install in sync, doctor exit-stable + offline-safe
 Next recommended agent: owner
-Next action: commit `feat/massoh-cli-verbs` + open PR (or merge — solo, all-green, additive)
+Next action: merge `feat/massoh-version-notify`, then `massoh install` (clears expected VERSION drift)
 ```

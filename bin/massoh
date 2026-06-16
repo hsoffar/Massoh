@@ -14,6 +14,8 @@ LINK=0   # default: copy (safe). --link to symlink into the clone (live updates)
 
 say()  { printf '%s\n' "$*"; }
 die()  { printf 'massoh: %s\n' "$*" >&2; exit 1; }
+mver() { cat "$MASSOH_HOME/VERSION" 2>/dev/null || echo unknown; }
+msha() { git -C "$MASSOH_HOME" rev-parse --short HEAD 2>/dev/null || echo '?'; }
 
 backup_claude() {
   [ -d "$CLAUDE_DIR" ] || return 0
@@ -62,7 +64,7 @@ cmd_install() {
   # skills (owned names)
   for d in "$MASSOH_HOME"/claude/skills/*/; do wire "${d%/}" "$CLAUDE_DIR/skills/$(basename "$d")"; done
   # engine (read on demand)
-  for p in OPERATING_SYSTEM.md policies templates docs manifest.yml; do
+  for p in OPERATING_SYSTEM.md policies templates docs manifest.yml VERSION; do
     [ -e "$MASSOH_HOME/$p" ] && wire "$MASSOH_HOME/$p" "$CLAUDE_DIR/agent-os/$p"; done
   add_block
   say "done. enabled globally; dormant until a repo opts in (massoh on)."
@@ -117,8 +119,11 @@ scaffold() {  # scaffold <dest> <template>  (never overwrite)
 
 cmd_off() { rm -f "${1:-$PWD}/.massoh"; say "massoh off — repo dormant (files kept)."; }
 
+cmd_version() { say "massoh $(mver) ($(msha))"; }
+
 cmd_status() {
   say "Massoh status"
+  say "  version: $(mver) ($(msha))"
   say "  repo:    $MASSOH_HOME ($(git -C "$MASSOH_HOME" rev-parse --short HEAD 2>/dev/null || echo '?'))"
   say "  global:  $([ -d "$CLAUDE_DIR/agent-os" ] && echo installed || echo 'not installed') @ $CLAUDE_DIR"
   say "  engaged: $(block_present && echo 'enabled (block present)' || echo 'disabled (no block)')"
@@ -130,7 +135,8 @@ cmd_status() {
 # doctor — verify the live ~/.claude install matches what cmd_install writes. READ-ONLY (stdout only).
 cmd_doctor() {
   say "massoh doctor → $CLAUDE_DIR"
-  local problems=0
+  local problems=0 offline="${MASSOH_NO_FETCH:-0}"
+  [ "${1:-}" = "--offline" ] && offline=1
   if block_present; then say "  ok   global block"; else say "  MISS global block (massoh enable)"; problems=$((problems+1)); fi
   for f in "$MASSOH_HOME"/claude/agents/massoh-*.md; do
     local a; a="$(basename "$f")"
@@ -139,10 +145,20 @@ cmd_doctor() {
   for s in start-task sync close-task history-cleanup; do
     if [ -e "$CLAUDE_DIR/skills/$s" ]; then say "  ok   skill $s"; else say "  MISS skill $s"; problems=$((problems+1)); fi
   done
-  for p in OPERATING_SYSTEM.md policies templates docs manifest.yml; do
+  for p in OPERATING_SYSTEM.md policies templates docs manifest.yml VERSION; do
     if [ -e "$CLAUDE_DIR/agent-os/$p" ]; then say "  ok   agent-os/$p"; else say "  MISS agent-os/$p"; problems=$((problems+1)); fi
   done
-  say "  repo  $MASSOH_HOME ($(git -C "$MASSOH_HOME" rev-parse --short HEAD 2>/dev/null || echo '?'))"
+  say "  repo  $MASSOH_HOME  v$(mver) ($(msha))"
+  # best-effort staleness check — informational only, NEVER changes exit code. opt-out: --offline / MASSOH_NO_FETCH=1
+  if [ "$offline" != 1 ] && git -C "$MASSOH_HOME" rev-parse --git-dir >/dev/null 2>&1; then
+    git -C "$MASSOH_HOME" fetch -q origin 2>/dev/null || true
+    local head omain; head=$(git -C "$MASSOH_HOME" rev-parse HEAD 2>/dev/null || echo x)
+    omain=$(git -C "$MASSOH_HOME" rev-parse origin/main 2>/dev/null || echo x)
+    if [ "$head" != x ] && [ "$omain" != x ] && [ "$head" != "$omain" ] \
+       && git -C "$MASSOH_HOME" merge-base --is-ancestor "$head" "$omain" 2>/dev/null; then
+      say "  ⟳    update available → massoh update"
+    fi
+  fi
   if [ "$problems" -eq 0 ]; then say "healthy — install matches manifest."; else say "drift: $problems issue(s). fix: massoh install"; return 1; fi
 }
 
@@ -202,9 +218,10 @@ case "$cmd" in
   enable)    cmd_enable ;;
   disable)   cmd_disable ;;
   status)    cmd_status ;;
-  doctor)    cmd_doctor ;;
+  doctor)    shift || true; cmd_doctor "$@" ;;
   discover)  shift || true; cmd_discover "$@" ;;
+  version|--version|-v) cmd_version ;;
   work)      shift; cmd_work "${1:-}" ;;
   uninstall) cmd_uninstall ;;
-  *) die "unknown command '$cmd'. verbs: install update on off enable disable status doctor discover work uninstall [--link]" ;;
+  *) die "unknown command '$cmd'. verbs: install update on off enable disable status doctor discover version work uninstall [--link]" ;;
 esac

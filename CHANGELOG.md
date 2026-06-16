@@ -1,0 +1,35 @@
+# Changelog
+
+All notable changes to Massoh. Format: [Keep a Changelog](https://keepachangelog.com/).
+Versioning is the product version in `VERSION` (the engine's `manifest.yml version:` is separate —
+it stamps the install-boundary schema, not the product).
+
+## How to update an existing install
+```bash
+massoh update      # git pull --ff-only (hardened: stashes local edits) + reinstall into ~/.claude
+massoh doctor      # verify the install matches the manifest; warns if a newer version is available
+massoh version     # show the installed version + clone SHA
+```
+
+## [0.2.0] - 2026-06-16
+### Added
+- `massoh discover` — scan a repo and mine conventions into `agent-project/STANDARDS.md`
+  (the "standards" layer); read by `massoh-implementer` + `massoh-reviewer-qa`.
+- `massoh doctor` — verify the `~/.claude` install matches the manifest; exits non-zero on drift.
+- `massoh version` / `--version` — print the installed version + clone SHA; shown in `massoh status`.
+- `doctor` best-effort **update-check** — fetches `origin` and prints "update available" when the
+  clone is behind `origin/main`. Informational only (never changes exit code). Opt-out:
+  `--offline` or `MASSOH_NO_FETCH=1`.
+- `templates/STANDARDS.template.md`, `VERSION`, `CHANGELOG.md`.
+- `test/run.sh` — first CLI test suite (runs against a throwaway `CLAUDE_CONFIG_DIR`).
+
+### Changed
+- `massoh update` hardened: `stash → pull --ff-only → pop`; never loses local edits; a non-ff pull
+  aborts cleanly and a pop conflict leaves edits in `git stash list`.
+- `VERSION` is now part of the `~/.claude/agent-os/` install payload.
+
+## [0.1.0] - 2026-06-16
+### Added
+- Initial extraction: marker-gated global install, 6 `massoh-*` role agents, 4 skills, policies,
+  templates, `bin/massoh` CLI (install/update/on/off/enable/disable/status/work/uninstall),
+  optional idle-cron, task-packet workflow.
