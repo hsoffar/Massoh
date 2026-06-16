@@ -1,8 +1,19 @@
 # PRODUCT_STRATEGY — Massoh
 
-## Current strategic mode (v0.1, post-extraction)
+## Positioning — "post-agile for agents" (decided 2026-06-16)
+Keep agile's **empirical core** (iterate, small increments, test against reality, inspect-and-adapt,
+retrospective learning) — those fight *uncertainty in software*, which agents face too. **Drop the
+human-coordination ceremony** (sprints, standups, story points, velocity) — agents sync instantly via
+files + run in parallel, so those are pure overhead. **Add what agile under-specifies: hard gates**
+(license-to-code, owner-gated safety, auditable packets) — agents move fast and can do irreversible
+damage cheaply. Pitch: *"agile's discipline without agile's meetings — enforced, auditable, for AI
+agents."* **Focus software now; keep the engine domain-neutral** (wedge is selectable per CHARTER —
+do not generalize before it's proven).
+
+## Current strategic mode (v0.3 shipped)
 Validate: does a **portable, gated** agent OS actually reduce build-trap / scope-creep / knowledge
 drift for a solo owner shipping with Claude Code — enough to install it in a second real repo?
+(v0.1→v0.3 shipped on itself: discover/doctor/version/cron, all through the gate.)
 
 ## Activation metric
 A repo runs `massoh on` **and** takes one task through the full gate (packet `00 → 06`) to a merge.
