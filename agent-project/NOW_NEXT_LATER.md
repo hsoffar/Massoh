@@ -1,18 +1,18 @@
 # NOW / NEXT / LATER — Massoh
 
 ## NOW (in flight)
-None. Repo just opted in (`massoh on`, 2026-06-16). Awaiting first `/start-task`.
+None. Shipped v0.1→v0.3 (discover, doctor, version+update-check, cron). Designing **v0.4 cadence**.
 
 ## NEXT (queued, agreed)
-- `massoh discover` + a `STANDARDS.md` layer wired into Implementer/Reviewer (top borrow from
-  buildermethods Agent OS).
+- **v0.4 — cadence / ceremonies** (owner request): agent-native "meetings" — a *sense of time* where
+  progress is revisited, KPIs gathered, decisions taken. `massoh standup` (DOING/DONE/BLOCKED delta),
+  `massoh review` (KPI report → `METRICS.md`), `massoh plan` (re-rank + surface owner decisions),
+  retro→memory. Driven by the `cron` cadence. cron = *do* work; cadence = *review* + *decide*.
 - Enforce the license-to-code gate mechanically (pre-commit / pre-push + CI check).
-- `bats` test suite for the CLI + `massoh doctor` (verify install vs `manifest.yml`).
 
 ## LATER (someday / maybe)
 - Emit `AGENTS.md` → multi-harness (Cursor / Codex / Antigravity).
 - Profiles (global default + project override) + a single `config.yml`.
-- `massoh report` — aggregate packet outcomes (cycle time, reject/kill rate) from `.agent_tasks/`.
 - Package as a Claude Code plugin / marketplace entry.
 
 ## FROZEN (do not build without an explicit owner unfreeze)

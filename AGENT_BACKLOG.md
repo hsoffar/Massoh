@@ -22,16 +22,17 @@ re-syncs `AGENT_SYNC.md`. Full rules: `~/.claude/agent-os/docs/AUTONOMOUS_CRON.m
 ## Queue (top = next)
 | # | Pri | Item | Why | Status |
 |---|-----|------|-----|--------|
-| 1 | P1 | Enforce license-to-code gate (pre-commit/pre-push + CI) | The one hard gate is honor-system today; make it mechanical | TODO |
-| 2 | P2 | Emit `AGENTS.md` from the 6 roles | Multi-harness portability (Cursor/Codex/Antigravity) | TODO |
-| 3 | P3 | Profiles + single `config.yml` | Project archetypes; consolidate config | TODO |
-| 4 | P3 | `massoh report` from `.agent_tasks/` | Prove the system with data, not claims | TODO |
+| 1 | P1 | **v0.4 cadence / ceremonies** — `standup` (DOING/DONE/BLOCKED delta) · `review` (KPI report → METRICS) · `plan` (re-rank + surface decisions) · retro→memory; cron-driven | Owner: a sense of time — progress revisited, KPIs gathered, decisions taken. Subsumes `massoh report`. | TODO |
+| 2 | P1 | Enforce license-to-code gate (pre-commit/pre-push + CI) | The one hard gate is honor-system today; make it mechanical | TODO |
+| 3 | P2 | Emit `AGENTS.md` from the 6 roles | Multi-harness portability (Cursor/Codex/Antigravity) | TODO |
+| 4 | P3 | Profiles + single `config.yml` | Project archetypes; consolidate config | TODO |
 | 5 | P3 | Upgrade `test/run.sh` → `bats`; commit-conv ratio in discover | Nicer test UX; fewer discover false-negatives | TODO |
 | 6 | P3 | Rename `manifest.yml version:` → `schema_version:` | Disambiguate from product `VERSION` | TODO |
 
 ## Done (newest first — kept, never deleted)
 | Pri | Item | PR | Date |
 |---|---|---|---|
+| P1 | `massoh cron` — autonomous parallel worktree loop runner (safe-by-default) | #4 → main `1f02151` | 2026-06-16 |
 | P1 | Version stamp (`massoh version`) + `doctor` update-check + `CHANGELOG.md` | TASK-version-notify (branch, pending merge) | 2026-06-16 |
 | P1 | `massoh discover` + `STANDARDS.md` layer (wired into implementer/reviewer) | TASK-massoh-cli-verbs (branch, pending merge) | 2026-06-16 |
 | P2 | `massoh doctor` + first CLI test suite (`test/run.sh`, 21 checks) | TASK-massoh-cli-verbs | 2026-06-16 |
