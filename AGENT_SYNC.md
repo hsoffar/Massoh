@@ -11,14 +11,13 @@ v0.1 post-extraction — validate that a portable, gated agent OS reduces build-
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-TASK-2026-06-16-massoh-version-notify — **DONE, awaiting owner merge.** version stamp + `doctor`
-update-check + CHANGELOG. Gate cleared 01→03→04→05→06 (owner pre-authorized). Branch
-`feat/massoh-version-notify`, **28/28 tests green.** (Prior TASK-massoh-cli-verbs merged: PR #1 → `778e06a`.)
+None in flight. **Shipped v0.2.0** — both PRs merged to main (`814df69`) + deployed (`massoh install`,
+`doctor` healthy). Next candidate: backlog #1 (enforce license-gate mechanically).
 
 ## Open questions (owner decision needed)
 | Question | Raised | Context |
 |---|---|---|
-| Merge `feat/massoh-version-notify` + `massoh install` (clears expected VERSION drift)? | 2026-06-16 | All-green, additive |
+| (none open) | | |
 
 ## Decision log (append-only — never delete a row)
 | Date | Decision | By |
@@ -32,6 +31,7 @@ update-check + CHANGELOG. Gate cleared 01→03→04→05→06 (owner pre-authori
 | 2026-06-16 | Review **APPROVE** (pending owner merge) — no scope creep, safety conditions held | reviewer-qa |
 | 2026-06-16 | **Merged PR #1** (discover/doctor/update) → main `778e06a`; deployed via `massoh install` | owner |
 | 2026-06-16 | TASK-version-notify: BUILD→APPROVE — version stamp + doctor update-check + CHANGELOG, 28/28 green | product-scope/impl/reviewer |
+| 2026-06-16 | **Merged PR #2** → main `814df69`; deployed v0.2.0; `doctor` healthy | owner |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -40,14 +40,14 @@ None.
 | Task ID | Stage | Status |
 |---|---|---|
 | TASK-2026-06-16-massoh-cli-verbs | merged | DONE — PR #1 → main `778e06a` |
-| TASK-2026-06-16-massoh-version-notify | 06 review APPROVE | DONE — awaiting owner merge |
+| TASK-2026-06-16-massoh-version-notify | merged | DONE — PR #2 → main `814df69`, deployed |
 
 ## Last handoff
 ```
-Agent: massoh-reviewer-qa
-Mode: REVIEW_QA
-Task: TASK-2026-06-16-massoh-version-notify (version stamp + doctor update-check + CHANGELOG)
-Status: APPROVE — 28/28 tests green, manifest↔install in sync, doctor exit-stable + offline-safe
-Next recommended agent: owner
-Next action: merge `feat/massoh-version-notify`, then `massoh install` (clears expected VERSION drift)
+Agent: owner
+Mode: deploy
+Task: ship v0.2.0 (PR #1 + PR #2)
+Status: DONE — merged to main 814df69, deployed (massoh install), doctor healthy, version 0.2.0
+Next recommended agent: massoh-product-scope (or system-architect)
+Next action: pick backlog #1 — enforce license-to-code gate mechanically (pre-commit + CI)
 ```
