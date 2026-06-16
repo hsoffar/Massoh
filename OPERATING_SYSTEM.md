@@ -5,7 +5,7 @@ Bootstrap: the host repo's `CLAUDE.md` (read it first — it is the session boot
 State: `AGENT_SYNC.md`. Policies: `agent-os/policies/`. Project specifics: `agent-project/`.
 Task history: `.agent_tasks/`.
 
-> **Portable file.** This is owned by agent-os (Masooh). Project-specific facts live in
+> **Portable file.** This is owned by agent-os (Massoh). Project-specific facts live in
 > `agent-project/` (charter, non-negotiables, strategy) and in `AGENT_SYNC.md` — never inline here.
 
 ## 1. Purpose

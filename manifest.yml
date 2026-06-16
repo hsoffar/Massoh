@@ -42,4 +42,5 @@ project_scaffold:
     - { dest: AGENT_SYNC.md,             source: templates/AGENT_SYNC.skeleton.md }
     - { dest: AGENT_BACKLOG.md,          source: templates/AGENT_BACKLOG.skeleton.md }
     - { dest: memory/SCHEMA.md,          source: templates/MEMORY_SCHEMA.md }
+    - { dest: memory/MEMORY.md,          source: null }   # seeded with a "# Memory index" header by `massoh on`
     - { dest: .agent_tasks/.gitkeep,     source: null }
