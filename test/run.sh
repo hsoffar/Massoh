@@ -164,6 +164,32 @@ CRe="$TMP/cr_empty"; mkcronrepo "$CRe" 0
 oe="$( cd "$CRe" && "$CRON" once --no-idle-check 2>&1 )"
 check "empty backlog exits cleanly"           "echo '$oe' | grep -q 'no unblocked TODO'"
 
+echo "== T8: review (KPI report) =="
+RV="$TMP/revrepo"; mkdir -p "$RV"; ( cd "$RV" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+mkdir -p "$RV/.agent_tasks/TASK-a" "$RV/.agent_tasks/TASK-b"
+: > "$RV/.agent_tasks/TASK-a/04_implementation_packet.md"; : > "$RV/.agent_tasks/TASK-a/06_review_result.md"
+: > "$RV/.agent_tasks/TASK-b/04_implementation_packet.md"   # b licensed, not reviewed
+{ echo "| # | Pri | Item | Why | Status |"; echo "|---|---|---|---|---|"; echo "| 1 | P1 | x | y | TODO |"; echo "| 2 | P1 | z | w | DONE |"; } > "$RV/AGENT_BACKLOG.md"
+( cd "$RV" && echo a > f && git add -A && git commit -qm "feat: thing (#1)" )
+ro="$( cd "$RV" && "$MASSOH" review --no-write 2>&1 )"
+check "review reports packets total"          "echo '$ro' | grep -qE 'packets:.*2 total'"
+check "review reports reviewed count"         "echo '$ro' | grep -qE '1 reviewed'"
+check "review reports backlog TODO/DONE"      "echo '$ro' | grep -qE '1 TODO'"
+check "review reports merged PR"              "echo '$ro' | grep -qE '1 PRs merged'"
+# --no-write must not change the repo
+b8="$(cd "$RV" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+( cd "$RV" && "$MASSOH" review --no-write >/dev/null 2>&1 )
+a8="$(cd "$RV" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+check "review --no-write changed nothing"     "[ '$b8' = '$a8' ]"
+# default write appends a snapshot; second run appends another
+( cd "$RV" && "$MASSOH" review >/dev/null 2>&1 )
+check "review wrote a METRICS snapshot"        "[ -f '$RV/agent-project/METRICS.md' ] && grep -q '## Snapshot' '$RV/agent-project/METRICS.md'"
+( cd "$RV" && "$MASSOH" review >/dev/null 2>&1 )
+check "review append-only (2 snapshots)"       "[ \"\$(grep -c '## Snapshot' '$RV/agent-project/METRICS.md')\" -eq 2 ]"
+# graceful outside a git repo / no packets
+NG="$TMP/nongit"; mkdir -p "$NG"
+if ( cd "$NG" && "$MASSOH" review --no-write >/dev/null 2>&1 ); then ok "review degrades outside git repo"; else bad "review degrades outside git repo"; fi
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]

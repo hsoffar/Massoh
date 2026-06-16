@@ -11,6 +11,14 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.4.0] - 2026-06-16
+### Added
+- `massoh review` — the KPI "review ceremony" (first slice of v0.4 cadence). Read-only: gathers
+  packet / backlog / delivery (PRs, commits, reverts) / branch metrics from `.agent_tasks/` + git +
+  `AGENT_BACKLOG.md`, prints them, and appends a `## Snapshot` block to `agent-project/METRICS.md`
+  (append-only). Flags: `--since DAYS`, `--no-write`, `--run-tests`. Degrades gracefully outside a
+  git repo / with no packets.
+
 ## [0.3.0] - 2026-06-16
 ### Added
 - `massoh cron` — the autonomous loop runner (`bin/massoh-cron`). Drains `AGENT_BACKLOG.md`:

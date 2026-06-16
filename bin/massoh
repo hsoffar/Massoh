@@ -195,6 +195,50 @@ cmd_discover() {
   say "  wrote $dest — review + fill the (…) placeholders."
 }
 
+# review — the KPI "review ceremony": gather metrics (read-only) + append a METRICS snapshot.
+cmd_review() {
+  local since=7 write=1 runtests=0
+  while [ $# -gt 0 ]; do case "$1" in
+    --since) shift; since="${1:-7}";; --no-write) write=0;; --run-tests) runtests=1;;
+    *) die "unknown review flag: $1";; esac; shift; done
+  local repo; repo="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || pwd)"
+  local ts; ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local pt=0 prev=0 plic=0 d
+  if [ -d "$repo/.agent_tasks" ]; then
+    for d in "$repo"/.agent_tasks/TASK-*/; do [ -d "$d" ] || continue; pt=$((pt+1))
+      [ -f "${d}06_review_result.md" ] && prev=$((prev+1))
+      [ -f "${d}04_implementation_packet.md" ] && plic=$((plic+1)); done
+  fi
+  local popen=$((pt - prev))
+  local bl="$repo/AGENT_BACKLOG.md" td=0 dg=0 dn=0 bk=0
+  if [ -f "$bl" ]; then
+    td=$(grep -c '| TODO |' "$bl" || true); dg=$(grep -c '| DOING |' "$bl" || true)
+    dn=$(grep -c '| DONE |' "$bl" || true); bk=$(grep -c '| BLOCKED |' "$bl" || true)
+  fi
+  local prs=0 commits=0 reverts=0 featb=0 cronb=0
+  if git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+    prs=$(git -C "$repo" log --oneline 2>/dev/null | grep -cE '\(#[0-9]+\)' || true)
+    commits=$(git -C "$repo" log --oneline --since="$since days ago" 2>/dev/null | wc -l | tr -d ' ')
+    reverts=$(git -C "$repo" log --oneline 2>/dev/null | grep -ci revert || true)
+    featb=$(git -C "$repo" branch --list 'feat/*' 2>/dev/null | grep -c . || true)
+    cronb=$(git -C "$repo" branch --list 'cron/*' 2>/dev/null | grep -c . || true)
+  fi
+  local testline="skipped (--run-tests to run)"
+  [ "$runtests" = 1 ] && [ -f "$repo/test/run.sh" ] && testline="$(cd "$repo" && bash test/run.sh 2>&1 | tail -1)"
+  local report="massoh review — $ts  (v$(mver))
+  packets:   $pt total · $prev reviewed · $plic licensed · $popen open
+  backlog:   $td TODO · $dg DOING · $dn DONE · $bk BLOCKED
+  delivery:  $prs PRs merged · $commits commits/${since}d · $reverts reverts
+  branches:  $featb feat/* · $cronb cron/*
+  quality:   $testline"
+  say "$report"
+  if [ "$write" = 1 ]; then
+    mkdir -p "$repo/agent-project"
+    { printf '\n## Snapshot %s (v%s)\n' "$ts" "$(mver)"; printf '%s\n' "$report" | sed '1d; s/^  /- /'; } >> "$repo/agent-project/METRICS.md"
+    say "  → appended snapshot to agent-project/METRICS.md"
+  fi
+}
+
 # cron — the autonomous loop runner (separate script; safe-by-default: dry-run, no auto-merge).
 cmd_cron() { exec "$MASSOH_HOME/bin/massoh-cron" "$@"; }
 
@@ -223,9 +267,10 @@ case "$cmd" in
   status)    cmd_status ;;
   doctor)    shift || true; cmd_doctor "$@" ;;
   discover)  shift || true; cmd_discover "$@" ;;
+  review)    shift || true; cmd_review "$@" ;;
   cron)      shift || true; cmd_cron "$@" ;;
   version|--version|-v) cmd_version ;;
   work)      shift; cmd_work "${1:-}" ;;
   uninstall) cmd_uninstall ;;
-  *) die "unknown command '$cmd'. verbs: install update on off enable disable status doctor discover cron version work uninstall [--link]" ;;
+  *) die "unknown command '$cmd'. verbs: install update on off enable disable status doctor discover review cron version work uninstall [--link]" ;;
 esac
