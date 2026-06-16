@@ -32,7 +32,28 @@ A scheduled tick (e.g. every 30 min) that, **only when the owner is idle**:
 - *Owner-gated stops* — the few actions that are expensive/irreversible always wait for a human.
 - *Flag-dark auto-merge only* — "merge while away" never means "behavior change for everyone".
 
-## Wiring (project-specific)
-The scheduler is whatever the environment provides (a cron tool, a CI schedule, a runner). Keep the
-**marker convention** (`[cron]`) on its `AGENT_SYNC.md` entries so unattended work is scannable
-(`policies/13_MONITORING.md`). Turn it off by removing the schedule, or `massoh off` for the repo.
+## Wiring it (the runner — `massoh cron`, since v0.3)
+Massoh ships the runner; you supply the clock.
+
+```bash
+massoh cron once                 # ONE tick, DRY-RUN (default): prints what it would do. No spend.
+massoh cron once --run           # execute: worktree(s) + agent + gate + DONE + [cron] sync entry
+massoh cron once --run --parallel 3       # fan 3 disjoint TODOs to parallel worktree agents
+massoh cron once --run --auto-merge       # merge a branch ONLY if its gate is green (opt-in)
+massoh cron status               # config + whether a schedule is installed
+massoh cron install --every 30m           # PRINTS a crontab line (does not install)
+massoh cron install --every 30m --apply --yes-spend   # actually install (recurring paid spend)
+massoh cron off                  # remove the installed schedule
+```
+
+**Safe by default:** dry-run unless `--run`; auto-merge OFF unless `--auto-merge`; idleness gate ON
+(`--no-idle-check` for tests only). Paid `claude -p` spend + auto-merge stay owner-gated — the flags
+are the switch, the defaults keep them off.
+
+**Injectable (zero-cost testing / BYO agent):** `MASSOH_AGENT_CMD` (default `claude -p`) and
+`MASSOH_GATE_CMD` (default: `test/run.sh` if present, else `true`).
+
+**Race-free parallel:** each agent works only its own `cron/<slug>` branch in its own worktree; the
+parent process is the *single* writer of `AGENT_BACKLOG.md`/`AGENT_SYNC.md` and the only one that
+merges. Keep the **`[cron]`** marker on sync entries so unattended work is scannable
+(`policies/13_MONITORING.md`). Turn it off with `massoh cron off`, or `massoh off` for the repo.

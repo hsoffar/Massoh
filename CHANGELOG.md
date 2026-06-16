@@ -11,6 +11,21 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.3.0] - 2026-06-16
+### Added
+- `massoh cron` — the autonomous loop runner (`bin/massoh-cron`). Drains `AGENT_BACKLOG.md`:
+  idleness gate → top unblocked TODO(s) → isolated **git worktree per item** → injectable agent →
+  local gate → marks DONE + one serialized `[cron]` `AGENT_SYNC.md` entry.
+  - **Safe by default:** `once` is **dry-run** unless `--run`; **auto-merge OFF** unless
+    `--auto-merge` (and only when the gate is green); **idleness gate ON**.
+  - **Parallel:** `--parallel N` fans N disjoint items to worktree agents; the parent is the single
+    writer of `AGENT_BACKLOG`/`AGENT_SYNC` + the only one that merges (no write-race).
+  - **Injectable for zero-cost testing:** `MASSOH_AGENT_CMD` (default `claude -p`) +
+    `MASSOH_GATE_CMD` — tests use fakes, no API spend.
+  - `massoh cron install [--every DUR] [--apply --yes-spend]` generates a crontab line; only touches
+    the user crontab with explicit `--apply --yes-spend` (recurring paid spend = owner opt-in).
+    `massoh cron off` removes it. `massoh cron status` shows config.
+
 ## [0.2.0] - 2026-06-16
 ### Added
 - `massoh discover` — scan a repo and mine conventions into `agent-project/STANDARDS.md`
