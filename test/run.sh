@@ -109,6 +109,61 @@ check "doctor --offline skips update-check"    "! echo '$d6o' | grep -q 'update 
 MASSOH_HOME="$W6" CLAUDE_CONFIG_DIR="$CC6" "$W6/bin/massoh" uninstall >/dev/null 2>&1
 check "uninstall removed VERSION"             "[ ! -f '$CC6/agent-os/VERSION' ]"
 
+echo "== T7: cron (idleness, dry-run, run, parallel, auto-merge) =="
+CRON="$REPO_ROOT/bin/massoh-cron"
+FAKE="$TMP/fakeagent.sh"
+cat > "$FAKE" <<'FA'
+#!/usr/bin/env bash
+echo "invoked" >> "$MASSOH_TEST_SENTINEL"
+echo "work for: $1" > agent-was-here.txt
+git add -A >/dev/null 2>&1 && git commit -qm "fake cron work" >/dev/null 2>&1 || true
+FA
+chmod +x "$FAKE"
+mkcronrepo(){ # $1=dir $2=n_todos
+  local d="$1" n="$2" i
+  mkdir -p "$d"; ( cd "$d" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+  { echo "# Backlog"; echo "## Queue"; echo "| # | Pri | Item | Why | Status |"; echo "|---|---|---|---|---|"
+    for i in $(seq 1 "$n"); do echo "| $i | P1 | Cron item $i | why$i | TODO |"; done
+    echo "| 99 | P3 | Blocked one | z | BLOCKED |"; } > "$d/AGENT_BACKLOG.md"
+  printf '# sync\n' > "$d/AGENT_SYNC.md"; echo x > "$d/.massoh"
+  ( cd "$d" && git add -A && git commit -qm init )
+}
+# T7a idleness gate (fresh commit = active)
+CRi="$TMP/cr_idle"; mkcronrepo "$CRi" 1
+oi="$( cd "$CRi" && "$CRON" once 2>&1 )"
+check "cron idleness gate skips on fresh commit" "echo '$oi' | grep -q 'owner active'"
+# T7b dry-run default — no agent call, backlog untouched
+SENd="$TMP/sen_dry"; : > "$SENd"; CRd="$TMP/cr_dry"; mkcronrepo "$CRd" 2
+od="$( cd "$CRd" && MASSOH_TEST_SENTINEL="$SENd" MASSOH_AGENT_CMD="$FAKE" "$CRON" once --no-idle-check 2>&1 )"
+check "dry-run prints plan"                   "echo '$od' | grep -q 'DRY-RUN'"
+check "dry-run did NOT call agent"            "[ ! -s '$SENd' ]"
+check "dry-run left backlog TODO"             "grep -q '| TODO |' '$CRd/AGENT_BACKLOG.md'"
+# T7c run single
+SENr="$TMP/sen_run"; : > "$SENr"; CRr="$TMP/cr_run"; mkcronrepo "$CRr" 2
+( cd "$CRr" && MASSOH_TEST_SENTINEL="$SENr" MASSOH_AGENT_CMD="$FAKE" MASSOH_GATE_CMD=true "$CRON" once --run --no-idle-check ) >/dev/null 2>&1
+check "run called agent once"                 "[ \"\$(wc -l < '$SENr')\" -eq 1 ]"
+check "run marked one item DONE"              "grep -q '| DONE |' '$CRr/AGENT_BACKLOG.md'"
+check "run appended [cron] sync entry"        "grep -q '\[cron\]' '$CRr/AGENT_SYNC.md'"
+check "run created a cron/* branch"           "git -C '$CRr' branch --list 'cron/*' | grep -q cron/"
+check "run cleaned worktrees"                 "[ \"\$(git -C '$CRr' worktree list | wc -l)\" -eq 1 ]"
+check "auto-merge OFF by default (main clean)" "! git -C '$CRr' cat-file -e main:agent-was-here.txt 2>/dev/null"
+# T7d parallel 2 — no corruption
+SENp="$TMP/sen_par"; : > "$SENp"; CRp="$TMP/cr_par"; mkcronrepo "$CRp" 2
+( cd "$CRp" && MASSOH_TEST_SENTINEL="$SENp" MASSOH_AGENT_CMD="$FAKE" MASSOH_GATE_CMD=true "$CRON" once --run --parallel 2 --no-idle-check ) >/dev/null 2>&1
+check "parallel called agent twice"           "[ \"\$(wc -l < '$SENp')\" -eq 2 ]"
+check "parallel marked 2 DONE"                "[ \"\$(grep -c '| DONE |' '$CRp/AGENT_BACKLOG.md')\" -eq 2 ]"
+check "parallel wrote 2 result lines"         "[ \"\$(grep -c 'agent_rc=' '$CRp/AGENT_SYNC.md')\" -eq 2 ]"
+check "parallel one serialized [cron] block"  "[ \"\$(grep -c '\[cron\] tick' '$CRp/AGENT_SYNC.md')\" -eq 1 ]"
+# T7e auto-merge ON merges a green branch
+SENa="$TMP/sen_am"; : > "$SENa"; CRa="$TMP/cr_am"; mkcronrepo "$CRa" 1
+( cd "$CRa" && MASSOH_TEST_SENTINEL="$SENa" MASSOH_AGENT_CMD="$FAKE" MASSOH_GATE_CMD=true "$CRON" once --run --auto-merge --no-idle-check ) >/dev/null 2>&1
+check "auto-merge ON merged green branch"     "git -C '$CRa' cat-file -e main:agent-was-here.txt 2>/dev/null"
+check "auto-merge sync says merged=yes"       "grep -q 'merged=yes' '$CRa/AGENT_SYNC.md'"
+# T7f empty backlog
+CRe="$TMP/cr_empty"; mkcronrepo "$CRe" 0
+oe="$( cd "$CRe" && "$CRON" once --no-idle-check 2>&1 )"
+check "empty backlog exits cleanly"           "echo '$oe' | grep -q 'no unblocked TODO'"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]

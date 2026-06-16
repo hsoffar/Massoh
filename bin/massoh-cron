@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# massoh-cron — the autonomous loop runner (drain AGENT_BACKLOG, parallel worktree agents, sync).
+# SAFE BY DEFAULT: dry-run unless --run; auto-merge OFF unless --auto-merge; idleness gate ON.
+# The agent + gate commands are INJECTABLE so the whole loop is testable with fakes at zero cost:
+#   MASSOH_AGENT_CMD  (default: claude -p)         — invoked as: $MASSOH_AGENT_CMD "<prompt>"
+#   MASSOH_GATE_CMD   (default: bash test/run.sh if present, else true)  — run in the worktree
+set -euo pipefail
+
+REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+say(){ printf '%s\n' "$*"; }
+die(){ printf 'massoh-cron: %s\n' "$*" >&2; exit 1; }
+slugify(){ printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-40; }
+
+AGENT_CMD="${MASSOH_AGENT_CMD:-claude -p}"
+IDLE_MIN=25
+
+# ---- backlog parsing: rows `| n | Pri | Item | Why | TODO |` ----
+backlog_todos(){  # prints one TODO item text per line, in queue order
+  [ -f "$REPO/AGENT_BACKLOG.md" ] || return 0
+  awk -F'|' '
+    /^\|/ {
+      st=$6; gsub(/^[ \t]+|[ \t]+$/,"",st)
+      if (st=="TODO") { it=$4; gsub(/^[ \t]+|[ \t]+$/,"",it); if(it!="") print it }
+    }' "$REPO/AGENT_BACKLOG.md"
+}
+
+owner_active(){  # 0 = active (skip), 1 = idle (go)
+  [ "${NO_IDLE:-0}" = 1 ] && return 1
+  # dirty tree = mid-edit = active
+  [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ] && return 0
+  local last now; last=$(git -C "$REPO" log -1 --format=%ct 2>/dev/null || echo 0); now=$(date +%s)
+  [ $(( now - last )) -lt $(( IDLE_MIN * 60 )) ] && return 0 || return 1
+}
+
+mark_done(){  # set the first `| TODO |` row whose Item matches $1 to `| DONE |` (parent only)
+  local item="$1" f="$REPO/AGENT_BACKLOG.md" tmp; tmp="$(mktemp)"
+  awk -v it="$item" '
+    BEGIN{done=0}
+    { if(!done && index($0,it) && $0 ~ /\| TODO \|/){ sub(/\| TODO \|/,"| DONE |"); done=1 } print }
+  ' "$f" > "$tmp" && mv "$tmp" "$f"
+}
+
+# ---- agent+gate for one PREBUILT worktree (background-safe: writes only its own result file) ----
+work_item(){
+  local slug="$1" item="$2" wt="$3"
+  local rfile="$RESULTS/$slug.result"   # separate line: $slug must be set before use (bash local gotcha)
+  local prompt="You are a Massoh autonomous cron worker on branch cron/$slug in an isolated git worktree.
+Work this backlog item to completion under all guardrails (~/.claude/agent-os/policies/09_GUARDRAILS.md):
+  $item
+Add a real test, run the local gate, open a PR. Do NOT merge. Do NOT touch designated safety-critical files."
+  local arc=0 grc=0 gate_cmd
+  gate_cmd="${MASSOH_GATE_CMD:-}"; [ -z "$gate_cmd" ] && { [ -f "$wt/test/run.sh" ] && gate_cmd="bash test/run.sh" || gate_cmd="true"; }
+  ( cd "$wt" && $AGENT_CMD "$prompt" ) >"$RESULTS/$slug.agentlog" 2>&1 || arc=$?
+  ( cd "$wt" && eval "$gate_cmd" ) >"$RESULTS/$slug.gatelog" 2>&1 || grc=$?
+  printf 'slug=%s\nitem=%s\nbranch=cron/%s\nagent_rc=%s\ngate_rc=%s\nstatus=worked\n' \
+    "$slug" "$item" "$slug" "$arc" "$grc" > "$rfile"
+}
+
+cmd_once(){
+  local mode=dry parallel=1 automerge=0
+  while [ $# -gt 0 ]; do case "$1" in
+    --run) mode=run;; --dry-run) mode=dry;; --auto-merge) automerge=1;;
+    --parallel) shift; parallel="${1:-1}";; --no-idle-check) NO_IDLE=1;;
+    --idle-min) shift; IDLE_MIN="${1:-25}";;
+    *) die "unknown once flag: $1";; esac; shift; done
+
+  if owner_active; then say "massoh-cron: owner active (< ${IDLE_MIN}m) — skipping tick."; return 0; fi
+
+  local items=(); while IFS= read -r line; do [ -n "$line" ] && items+=("$line"); done < <(backlog_todos | head -n "$parallel")
+  [ "${#items[@]}" -eq 0 ] && { say "massoh-cron: no unblocked TODO — nothing to do."; return 0; }
+
+  if [ "$mode" = dry ]; then
+    say "massoh-cron: DRY-RUN (--run to execute). idle ✓. would process ${#items[@]} item(s):"
+    local i=1; for it in "${items[@]}"; do say "  $i) [$(slugify "$it")] $it  (agent: $AGENT_CMD)"; i=$((i+1)); done
+    say "  (no worktree, no agent call, no edits, auto-merge=$automerge)"; return 0
+  fi
+
+  WTROOT="$(mktemp -d "${TMPDIR:-/tmp}/massoh-cron-wt.XXXXXX")"
+  RESULTS="$(mktemp -d "${TMPDIR:-/tmp}/massoh-cron-res.XXXXXX")"
+  trap 'git -C "$REPO" worktree prune 2>/dev/null || true; rm -rf "$WTROOT" "$RESULTS"' EXIT
+  say "massoh-cron: RUN — ${#items[@]} item(s), parallel=$parallel, auto-merge=$automerge"
+
+  local base; base=$(git -C "$REPO" rev-parse --verify -q main >/dev/null 2>&1 && echo main || git -C "$REPO" rev-parse --abbrev-ref HEAD)
+  local slugs=() its=() wts=()
+  for it in "${items[@]}"; do            # create worktrees SERIALLY (parent) → no git-index race
+    local slug; slug="$(slugify "$it")"; local wt="$WTROOT/$slug"
+    if git -C "$REPO" worktree add -q -b "cron/$slug" "$wt" "$base" 2>/dev/null; then
+      slugs+=("$slug"); its+=("$it"); wts+=("$wt")
+    else
+      printf 'slug=%s\nitem=%s\nstatus=worktree-failed\n' "$slug" "$it" > "$RESULTS/$slug.result"
+    fi
+  done
+  local pids=() k                         # agent+gate run in PARALLEL
+  for k in "${!slugs[@]}"; do work_item "${slugs[$k]}" "${its[$k]}" "${wts[$k]}" & pids+=("$!"); done
+  for p in "${pids[@]:-}"; do wait "$p" 2>/dev/null || true; done
+  for k in "${!slugs[@]}"; do git -C "$REPO" worktree remove --force "${wts[$k]}" 2>/dev/null || true; done
+
+  # ---- serialized: parent alone writes AGENT_BACKLOG + AGENT_SYNC + merges ----
+  mkdir -p "$REPO/.agent_tasks/cron"
+  local ts; ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local block="### [cron] tick $ts"$'\n'
+  for r in "$RESULTS"/*.result; do
+    [ -f "$r" ] || continue
+    local slug item branch arc grc st; slug=""; item=""; branch=""; arc=""; grc=""; st=""
+    while IFS='=' read -r k v; do case "$k" in slug)slug=$v;;item)item=$v;;branch)branch=$v;;agent_rc)arc=$v;;gate_rc)grc=$v;;status)st=$v;; esac; done < "$r"
+    cp "$r" "$REPO/.agent_tasks/cron/$ts-$slug.result" 2>/dev/null || true
+    if [ "$st" = worked ]; then
+      mark_done "$item"
+      local merged=no
+      if [ "$automerge" = 1 ] && [ "$grc" = 0 ]; then
+        if git -C "$REPO" checkout -q main 2>/dev/null && git -C "$REPO" merge --no-ff -q "$branch" -m "cron: merge $branch (gate green)" 2>/dev/null; then merged=yes; fi
+      fi
+      block+="- $item → $branch · agent_rc=$arc · gate=$([ "$grc" = 0 ] && echo green || echo red) · merged=$merged"$'\n'
+    else
+      block+="- $item → $st"$'\n'
+    fi
+  done
+  printf '\n%s' "$block" >> "$REPO/AGENT_SYNC.md"
+  say "massoh-cron: tick complete. branches: cron/*  (see AGENT_SYNC.md §[cron])."
+}
+
+# ---- scheduler: generate an artifact; only touch the user crontab with --apply --yes-spend ----
+cmd_install(){
+  local every="30m" apply=0 yes=0
+  while [ $# -gt 0 ]; do case "$1" in --every) shift; every="${1:-30m}";; --apply) apply=1;; --yes-spend) yes=1;; *) die "unknown install flag: $1";; esac; shift; done
+  local mins; case "$every" in *m) mins="${every%m}";; *h) mins=$(( ${every%h} * 60 ));; *) mins=30;; esac
+  local line="*/$mins * * * * cd $REPO && $REPO/bin/massoh cron once --run >> $REPO/.agent_tasks/cron/cron.log 2>&1"
+  say "massoh-cron: schedule (every ${every}):"
+  say "  $line"
+  if [ "$apply" = 1 ] && [ "$yes" = 1 ]; then
+    command -v crontab >/dev/null || die "crontab not found; add the line above to your scheduler manually."
+    ( crontab -l 2>/dev/null | grep -vF "massoh cron once"; echo "$line" ) | crontab -
+    say "  applied to user crontab. (recurring paid spend enabled — remove with: massoh cron off)"
+  else
+    say "  NOT applied (recurring paid spend). Re-run with --apply --yes-spend to install, or add it yourself."
+  fi
+}
+cmd_off(){
+  command -v crontab >/dev/null || { say "massoh-cron: no crontab; nothing to remove."; return 0; }
+  crontab -l 2>/dev/null | grep -vF "massoh cron once" | crontab - 2>/dev/null || true
+  say "massoh-cron: removed any installed schedule."
+}
+cmd_status(){
+  say "massoh-cron status"
+  say "  repo:       $REPO"
+  say "  agent cmd:  $AGENT_CMD"
+  say "  idle gate:  ${IDLE_MIN}m"
+  say "  scheduled:  $(command -v crontab >/dev/null && crontab -l 2>/dev/null | grep -qF 'massoh cron once' && echo yes || echo no)"
+  say "  TODOs:      $(backlog_todos | wc -l | tr -d ' ')"
+}
+
+case "${1:-status}" in
+  once)    shift || true; cmd_once "$@" ;;
+  install) shift || true; cmd_install "$@" ;;
+  off)     cmd_off ;;
+  status)  cmd_status ;;
+  *) die "usage: massoh cron {once [--run|--dry-run] [--parallel N] [--auto-merge] [--no-idle-check]|install|off|status}" ;;
+esac

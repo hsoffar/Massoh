@@ -195,6 +195,9 @@ cmd_discover() {
   say "  wrote $dest — review + fill the (…) placeholders."
 }
 
+# cron — the autonomous loop runner (separate script; safe-by-default: dry-run, no auto-merge).
+cmd_cron() { exec "$MASSOH_HOME/bin/massoh-cron" "$@"; }
+
 cmd_work() { local r="${1:?usage: massoh work <repo>}"; cd "$r"; exec "${MASSOH_CLAUDE:-claude}"; }
 
 cmd_uninstall() {
@@ -220,8 +223,9 @@ case "$cmd" in
   status)    cmd_status ;;
   doctor)    shift || true; cmd_doctor "$@" ;;
   discover)  shift || true; cmd_discover "$@" ;;
+  cron)      shift || true; cmd_cron "$@" ;;
   version|--version|-v) cmd_version ;;
   work)      shift; cmd_work "${1:-}" ;;
   uninstall) cmd_uninstall ;;
-  *) die "unknown command '$cmd'. verbs: install update on off enable disable status doctor discover version work uninstall [--link]" ;;
+  *) die "unknown command '$cmd'. verbs: install update on off enable disable status doctor discover cron version work uninstall [--link]" ;;
 esac
