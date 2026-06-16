@@ -35,6 +35,7 @@ anything unsafe, off-scope, or untested. Read the project's rules first:
 ## Always read first
 `AGENT_SYNC.md` · `agent-project/NON_NEGOTIABLES.md` · `agent-os/policies/05_REVIEW_CHECKLIST.md` ·
 `agent-os/policies/09_GUARDRAILS.md` · `agent-os/policies/11_TASK_PACKET_SPEC.md` ·
+`agent-project/STANDARDS.md` (if present — check the change conforms) ·
 **the specific task-packet folder for this review.**
 
 ## Required output

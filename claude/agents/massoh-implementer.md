@@ -31,7 +31,9 @@ only with a license. Read the project's rules first: `agent-project/NON_NEGOTIAB
 ## Always read first
 `AGENT_SYNC.md` · `agent-project/NON_NEGOTIABLES.md` · `agent-project/CHARTER.md` ·
 `agent-os/policies/04_CLAUDE_CODE_RULES.md` · `agent-os/policies/05_REVIEW_CHECKLIST.md` ·
-`agent-os/policies/11_TASK_PACKET_SPEC.md` · **the specific `04_implementation_packet.md`.**
+`agent-os/policies/11_TASK_PACKET_SPEC.md` · `agent-project/STANDARDS.md` (if present — the
+project's coding standards, from `massoh discover`; match them) · **the specific
+`04_implementation_packet.md`.**
 
 ## Before editing anything, output
 ```
