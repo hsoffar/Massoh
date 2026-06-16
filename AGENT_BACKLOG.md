@@ -27,10 +27,12 @@ re-syncs `AGENT_SYNC.md`. Full rules: `~/.claude/agent-os/docs/AUTONOMOUS_CRON.m
 | 3 | P3 | Profiles + single `config.yml` | Project archetypes; consolidate config | TODO |
 | 4 | P3 | `massoh report` from `.agent_tasks/` | Prove the system with data, not claims | TODO |
 | 5 | P3 | Upgrade `test/run.sh` → `bats`; commit-conv ratio in discover | Nicer test UX; fewer discover false-negatives | TODO |
+| 6 | P3 | Rename `manifest.yml version:` → `schema_version:` | Disambiguate from product `VERSION` | TODO |
 
 ## Done (newest first — kept, never deleted)
 | Pri | Item | PR | Date |
 |---|---|---|---|
+| P1 | Version stamp (`massoh version`) + `doctor` update-check + `CHANGELOG.md` | TASK-version-notify (branch, pending merge) | 2026-06-16 |
 | P1 | `massoh discover` + `STANDARDS.md` layer (wired into implementer/reviewer) | TASK-massoh-cli-verbs (branch, pending merge) | 2026-06-16 |
 | P2 | `massoh doctor` + first CLI test suite (`test/run.sh`, 21 checks) | TASK-massoh-cli-verbs | 2026-06-16 |
 | P1 | Harden `massoh update` (stash→pull→pop, fail-safe) | TASK-massoh-cli-verbs | 2026-06-16 |

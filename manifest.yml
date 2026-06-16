@@ -27,7 +27,8 @@ global_install:
   # the engine the agents read on demand
   - kind: dir
     dest: ~/.claude/agent-os/
-    source: .            # OPERATING_SYSTEM.md + policies/ + templates/ + docs/
+    source: .            # OPERATING_SYSTEM.md + policies/ + templates/ + docs/ + manifest.yml + VERSION
+    # NOTE: the exact payload is the `for p in …` list in bin/massoh:cmd_install — keep the two in sync.
 
 # Per-repo scaffold created by `massoh on` (NEVER overwritten — created only if missing):
 project_scaffold:
