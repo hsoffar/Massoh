@@ -11,6 +11,15 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.4.1] - 2026-06-16
+### Added
+- `massoh standup` — progress-delta ceremony: commits since `--since` (default 1d), DOING + BLOCKED
+  backlog items, in-flight packets (licensed, unreviewed). Read-only; appends `## [standup]` to
+  `AGENT_SYNC.md` unless `--no-write`.
+- `massoh plan` — planning ceremony: the prioritized TODO queue + surfaced owner decisions
+  (`AGENT_SYNC.md` §Open questions) + BLOCKED items. Read-only; appends `## [plan]` unless `--no-write`.
+- Completes the v0.4 ceremony set (review + standup + plan); cron-wiring is a later slice.
+
 ## [0.4.0] - 2026-06-16
 ### Added
 - `massoh review` — the KPI "review ceremony" (first slice of v0.4 cadence). Read-only: gathers
