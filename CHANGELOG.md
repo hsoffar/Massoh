@@ -11,6 +11,22 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.4.2] - 2026-06-17
+### Added
+- `massoh cron once` now runs **cadence ceremonies** on every tick (when `--run`):
+  - **Every tick:** `massoh standup` runs after the backlog serialization block, appending
+    a `## [standup]` entry to `AGENT_SYNC.md`. Suppress with `--no-standup`.
+  - **Every period boundary** (`period_ticks = period_days * 1440 / 30`): `massoh review`
+    + `massoh plan` run, then the counter resets to 0. Default period = 7 days.
+- New `cron once` flags: `--period-days N` (default 7), `--no-standup`.
+- New `cron install` flag: `--period-days N` (passed through to generated crontab line).
+- Period counter persisted in `.agent_tasks/cron/cadence_state` (create-if-missing,
+  corruption-tolerant: defaults to 0 on any non-integer content).
+- Ceremony commands are **injectable** via env vars `MASSOH_STANDUP_CMD`,
+  `MASSOH_REVIEW_CMD`, `MASSOH_PLAN_CMD` (parallel to `MASSOH_AGENT_CMD` / `MASSOH_GATE_CMD`).
+  Ceremony failures are wrapped in `|| true` — cannot abort a cron tick.
+- Completes v0.4: "cron = do work; cadence = review + decide."
+
 ## [0.4.1] - 2026-06-16
 ### Added
 - `massoh standup` — progress-delta ceremony: commits since `--since` (default 1d), DOING + BLOCKED
