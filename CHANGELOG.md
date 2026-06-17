@@ -11,6 +11,26 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.7.0] - 2026-06-17
+### Added
+- **`massoh ledger`** — self-measuring primitive: cost capture and aggregated reporting.
+  Zero LLM spend. Pure bash + awk.
+  - **`massoh ledger add <task-id> <stage> <tokens> <seconds>`** — appends one TSV row to
+    `.agent_tasks/ledger.tsv` (append-only; creates `.agent_tasks/` if absent so it can be called
+    in CI before `massoh on`). Row format: `<ISO-8601-UTC>\t<task-id>\t<stage>\t<tokens>\t<seconds>`.
+    Validation: exactly 4 args; `tokens` and `seconds` must be non-negative integers (`^[0-9]+$`,
+    checked before any file touch); `task-id` and `stage` are tab/newline-stripped (never rejected
+    for content, but empty-after-strip → error). Single `printf >> $LEDGER` write (atomic at
+    POSIX PIPE_BUF). `stage` is free-form in v1 (future versions may enumerate).
+  - **`massoh ledger`** (no args) — read-only awk report: tokens + seconds per task and per
+    stage, totals, per-task `avg_tokens/stage`. Division-by-zero guarded (count=0 → "n/a").
+    Malformed rows silently skipped (`NF < 5` or non-numeric field 4/5). Absent ledger →
+    human-readable degraded message, exit 0, no file created.
+  - `ledger.tsv` is tracked in git (audit history, same as `METRICS.md` and `AGENT_SYNC.md`).
+    No `.gitignore` change.
+  - Architectural note: verb-based capture (not SubagentStop hook) keeps the ledger
+    harness-neutral: any orchestrator can call `massoh ledger add`. Hook auto-capture is a NEXT.
+
 ## [0.6.0] - 2026-06-17
 ### Added
 - **`massoh cron once --every <DUR>`** — fixes a correctness bug: `period_ticks` was hardcoded

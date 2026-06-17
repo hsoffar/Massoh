@@ -4,14 +4,16 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-17 ( TASK-2026-06-17-efficiency-v2 — FINAL APPROVE: T14g real test confirmed; 137/137 green; all A/B/C conditions verified; ready for owner commit + PR )
+Last updated: 2026-06-17 ( TASK-2026-06-17-massoh-ledger — APPROVED by reviewer-qa: all 8 conditions L1–L7,L9 independently verified; 177/177 green; scope clean; safety-critical files untouched; ready for owner commit + PR )
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**TASK-2026-06-17-efficiency-v2** — FINAL APPROVE issued by reviewer-qa. T14g fix confirmed real (find-based dir snapshot, single-quote anti-pattern gone). All A1-A5/B1-B5/C1-C6 conditions independently verified. 137/137 green. Ready for owner commit + PR.
+**TASK-2026-06-17-massoh-ledger** — APPROVED by reviewer-qa. `cmd_ledger` added to `bin/massoh`; 177/177 green (40 new T15 checks, independently verified); VERSION 0.7.0; all 8 conditions L1–L7,L9 independently verified with line numbers; scope clean; safety-critical files untouched. Ready for owner commit + PR.
+
+**Previous task:** TASK-2026-06-17-efficiency-v2 — FINAL APPROVE issued by reviewer-qa. T14g fix confirmed real (find-based dir snapshot, single-quote anti-pattern gone). All A1-A5/B1-B5/C1-C6 conditions independently verified. 137/137 green. Ready for owner commit + PR.
 
 **Previous task:** TASK-2026-06-17-massoh-learn — APPROVED by reviewer-qa. All 4 conditions independently verified; 105/105 green. Ready for owner to merge (commit + open PR).
 
@@ -49,6 +51,10 @@ shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (
 | 2026-06-17 | TASK-2026-06-17-efficiency-v2: **REQUEST CHANGES** — 1 blocking: T14g "no-write" checksum check vacuous (single-quote path bug in test/run.sh lines 759-761 causes b14g=a14g="" always). Product code correct; all A/B/C conditions verified in code; sole fix is 3-line test change to use cd+find pattern (same as T13g/T8). | reviewer-qa |
 | 2026-06-17 | TASK-2026-06-17-efficiency-v2: **rev2 fix** — T14g test-only fix: replaced vacuous `md5sum '$RV14g/...'` with `cd "$RV14g" && find . ... \| md5sum` pattern (matches T8/T13g); product code unchanged; 137/137 green | implementer |
 | 2026-06-17 | TASK-2026-06-17-efficiency-v2: **APPROVE** (FINAL) — T14g real test confirmed; all A1-A5/B1-B5/C1-C6 conditions independently verified; 137/137 green; scope clean; manifest/install/uninstall/block untouched | reviewer-qa |
+| 2026-06-17 | TASK-2026-06-17-massoh-ledger: product-scope **BUILD** — time/token/cost ledger; verb `massoh ledger add <task-id> <stage> <tokens> <seconds>` (append-only TSV at `.agent_tasks/ledger.tsv`) + `massoh ledger` report; capture via orchestrator-called verb (SubagentStop hook noted as NEXT); routes to architecture-safety | product-scope |
+| 2026-06-17 | TASK-2026-06-17-massoh-ledger: arch/safety **APPROVED** — 8 mandatory conditions: L1 (tab/newline sanitize task-id+stage), L2 (integer regex validation tokens+seconds), L3 (arg-count guard first), L4 (single-printf->> write, named LEDGER var + SAFETY comment), L5 (awk div-zero guard), L6 (awk skip malformed rows), L7 (|| true on all reads + absent-file degrade exit 0), L9 (free-form stage comment); ledger.tsv tracked in git (audit history, not gitignored); T15a-T15m specified | architecture-safety |
+| 2026-06-17 | TASK-2026-06-17-massoh-ledger: **IMPLEMENTED** — cmd_ledger inline in bin/massoh (lines 698–790); 40 new T15 checks; 177/177 green; VERSION 0.7.0; all 8 conditions L1–L7,L9 met (line numbers in 05_handoff); routing to reviewer-qa |
+| 2026-06-17 | TASK-2026-06-17-massoh-ledger: **APPROVE** — all 8 conditions L1–L7,L9 independently verified (line refs in 06_review_result); 177/177 green (independently run); scope clean; no deferred features; safety-critical files untouched; T15c/T15d assert zero file side-effects on rejection | reviewer-qa | implementer |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -61,19 +67,19 @@ None.
 | TASK-2026-06-17-cadence-cron | 06_review_result (rev2 APPROVE) | APPROVED — ready for owner commit + PR |
 | TASK-2026-06-17-massoh-learn | 06_review_result (APPROVE) | APPROVED — ready for owner commit + PR |
 | TASK-2026-06-17-efficiency-v2 | 06_review_result (FINAL APPROVE) | APPROVED — ready for owner commit + PR |
+| TASK-2026-06-17-massoh-ledger | 06_review_result (APPROVE) | APPROVED — ready for owner commit + PR |
 
 ## Last handoff
 ```
-Agent: massoh-reviewer-qa (FINAL re-review)
+Agent: massoh-reviewer-qa
 Mode: review
-Task: TASK-2026-06-17-efficiency-v2 — efficiency v2 bundle (all 3 slices, final)
-Status: APPROVED — all blockers resolved; 137/137 green independently confirmed.
-Branch: feat/efficiency-v2
-BLOCK-1 resolution confirmed: test/run.sh lines 759-761 now use
-  cd "$RV14g" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la | md5sum
-  (same as T8/T13g). Single-quote anti-pattern gone. Test is real.
-All conditions verified independently: A1-A5, B1-B5, C1-C6.
-Scope: clean. manifest.yml, install/uninstall/backup/block, cmd_cron dispatch unchanged.
-Next recommended agent: owner
-Next action: commit feat/efficiency-v2 branch and open PR to merge into main.
+Task: TASK-2026-06-17-massoh-ledger — time/token/cost ledger
+Status: APPROVED. 06_review_result.md written.
+Branch: feat/massoh-ledger
+Decision: APPROVE — all 8 conditions L1–L7,L9 independently verified with line numbers;
+  177/177 green (independently run); scope clean (5 files only: bin/massoh, test/run.sh,
+  VERSION, CHANGELOG.md, AGENT_SYNC.md); no deferred features introduced; safety-critical
+  files untouched; T15c/T15d assert zero file side-effects on bad-input rejection (load-
+  bearing safety invariant confirmed).
+Next recommended agent: owner (commit + PR)
 ```
