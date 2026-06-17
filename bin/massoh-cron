@@ -2,8 +2,11 @@
 # massoh-cron — the autonomous loop runner (drain AGENT_BACKLOG, parallel worktree agents, sync).
 # SAFE BY DEFAULT: dry-run unless --run; auto-merge OFF unless --auto-merge; idleness gate ON.
 # The agent + gate commands are INJECTABLE so the whole loop is testable with fakes at zero cost:
-#   MASSOH_AGENT_CMD  (default: claude -p)         — invoked as: $MASSOH_AGENT_CMD "<prompt>"
-#   MASSOH_GATE_CMD   (default: bash test/run.sh if present, else true)  — run in the worktree
+#   MASSOH_AGENT_CMD    (default: claude -p)         — invoked as: $MASSOH_AGENT_CMD "<prompt>"
+#   MASSOH_GATE_CMD     (default: bash test/run.sh if present, else true)  — run in the worktree
+#   MASSOH_STANDUP_CMD  (default: massoh standup)    — cadence ceremony, injectable for tests
+#   MASSOH_REVIEW_CMD   (default: massoh review)     — cadence ceremony, injectable for tests
+#   MASSOH_PLAN_CMD     (default: massoh plan)        — cadence ceremony, injectable for tests
 set -euo pipefail
 
 REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -13,6 +16,23 @@ slugify(){ printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/
 
 AGENT_CMD="${MASSOH_AGENT_CMD:-claude -p}"
 IDLE_MIN=25
+
+# Resolve the massoh binary: prefer MASSOH_HOME (set by bin/massoh caller), else derive from script location
+_massoh_bin(){
+  if [ -n "${MASSOH_HOME:-}" ] && [ -x "$MASSOH_HOME/bin/massoh" ]; then
+    printf '%s' "$MASSOH_HOME/bin/massoh"
+  else
+    printf '%s' "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/massoh"
+  fi
+}
+
+# Injectable ceremony commands (Condition D)
+_STANDUP_CMD="${MASSOH_STANDUP_CMD:-}"
+_REVIEW_CMD="${MASSOH_REVIEW_CMD:-}"
+_PLAN_CMD="${MASSOH_PLAN_CMD:-}"
+_massoh_standup(){ if [ -n "$_STANDUP_CMD" ]; then eval "$_STANDUP_CMD"; else "$(_massoh_bin)" standup; fi; }
+_massoh_review(){  if [ -n "$_REVIEW_CMD"  ]; then eval "$_REVIEW_CMD";  else "$(_massoh_bin)" review;  fi; }
+_massoh_plan(){    if [ -n "$_PLAN_CMD"    ]; then eval "$_PLAN_CMD";    else "$(_massoh_bin)" plan;    fi; }
 
 # ---- backlog parsing: rows `| n | Pri | Item | Why | TODO |` ----
 backlog_todos(){  # prints one TODO item text per line, in queue order
@@ -57,11 +77,13 @@ Add a real test, run the local gate, open a PR. Do NOT merge. Do NOT touch desig
 }
 
 cmd_once(){
-  local mode=dry parallel=1 automerge=0
+  local mode=dry parallel=1 automerge=0 period_days=7 no_standup=0
   while [ $# -gt 0 ]; do case "$1" in
     --run) mode=run;; --dry-run) mode=dry;; --auto-merge) automerge=1;;
     --parallel) shift; parallel="${1:-1}";; --no-idle-check) NO_IDLE=1;;
     --idle-min) shift; IDLE_MIN="${1:-25}";;
+    --period-days) shift; period_days="${1:-7}";;
+    --no-standup) no_standup=1;;
     *) die "unknown once flag: $1";; esac; shift; done
 
   if owner_active; then say "massoh-cron: owner active (< ${IDLE_MIN}m) — skipping tick."; return 0; fi
@@ -117,14 +139,56 @@ cmd_once(){
   done
   printf '\n%s' "$block" >> "$REPO/AGENT_SYNC.md"
   say "massoh-cron: tick complete. branches: cron/*  (see AGENT_SYNC.md §[cron])."
+
+  # ---- cadence block: MUST be placed after backlog serialization (Condition B) ----
+  # Compute period_ticks from --period-days (using default --every=30m → 30 mins/tick).
+  # period_ticks = period_days * 1440 / 30. Minimum 1 to avoid infinite trigger.
+  local every_mins=30  # default tick interval in minutes (mirrors cmd_install default)
+  local period_ticks=$(( period_days * 1440 / every_mins ))
+  period_ticks=$(( period_ticks < 1 ? 1 : period_ticks ))
+
+  # Read counter file — corruption-tolerant (Condition A)
+  local state_file="$REPO/.agent_tasks/cron/cadence_state"
+  local tick_count=0 raw
+  if [ -f "$state_file" ]; then
+    raw="$(cat "$state_file" 2>/dev/null || echo 0)"
+    case "$raw" in
+      ''|*[!0-9]*) tick_count=0 ;;
+      *) tick_count="$raw" ;;
+    esac
+  fi
+  tick_count=$(( tick_count + 1 ))
+
+  # Run standup every tick — only in run mode and when not suppressed (Conditions B, C)
+  if [ "$mode" = run ] && [ "$no_standup" -eq 0 ]; then
+    say "massoh-cron: running standup ceremony."
+    ( cd "$REPO" && _massoh_standup ) || true
+  fi
+
+  # Run review + plan at period boundary, then reset counter (Conditions B, C)
+  if [ "$mode" = run ] && [ "$tick_count" -ge "$period_ticks" ]; then
+    say "massoh-cron: period boundary (tick $tick_count >= $period_ticks) — running review + plan."
+    ( cd "$REPO" && _massoh_review ) || true
+    ( cd "$REPO" && _massoh_plan )   || true
+    tick_count=0
+  fi
+
+  # Persist updated counter
+  printf '%s\n' "$tick_count" > "$state_file"
 }
 
 # ---- scheduler: generate an artifact; only touch the user crontab with --apply --yes-spend ----
 cmd_install(){
-  local every="30m" apply=0 yes=0
-  while [ $# -gt 0 ]; do case "$1" in --every) shift; every="${1:-30m}";; --apply) apply=1;; --yes-spend) yes=1;; *) die "unknown install flag: $1";; esac; shift; done
+  local every="30m" apply=0 yes=0 period_days=7
+  while [ $# -gt 0 ]; do case "$1" in
+    --every) shift; every="${1:-30m}";;
+    --apply) apply=1;;
+    --yes-spend) yes=1;;
+    --period-days) shift; period_days="${1:-7}";;
+    *) die "unknown install flag: $1";;
+  esac; shift; done
   local mins; case "$every" in *m) mins="${every%m}";; *h) mins=$(( ${every%h} * 60 ));; *) mins=30;; esac
-  local line="*/$mins * * * * cd $REPO && $REPO/bin/massoh cron once --run >> $REPO/.agent_tasks/cron/cron.log 2>&1"
+  local line="*/$mins * * * * cd $REPO && $REPO/bin/massoh cron once --run --period-days $period_days >> $REPO/.agent_tasks/cron/cron.log 2>&1"
   say "massoh-cron: schedule (every ${every}):"
   say "  $line"
   if [ "$apply" = 1 ] && [ "$yes" = 1 ]; then

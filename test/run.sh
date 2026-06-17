@@ -220,6 +220,129 @@ check "plan appends [plan] block"             "grep -q '## \[plan\]' '$CV/AGENT_
 NG2="$TMP/nongit2"; mkdir -p "$NG2"
 if ( cd "$NG2" && "$MASSOH" standup --no-write >/dev/null 2>&1 && "$MASSOH" plan --no-write >/dev/null 2>&1 ); then ok "standup/plan degrade outside git"; else bad "standup/plan degrade outside git"; fi
 
+echo "== T10: cadence ceremonies wired into cron =="
+CRON10="$REPO_ROOT/bin/massoh-cron"
+
+# Fake ceremony commands that write the expected markers (zero-cost, no real massoh call)
+FAKE_STANDUP="$TMP/fake_standup.sh"
+cat > "$FAKE_STANDUP" <<'FS'
+#!/usr/bin/env bash
+printf '\n## [standup]\nfake standup entry\n' >> AGENT_SYNC.md
+FS
+chmod +x "$FAKE_STANDUP"
+
+FAKE_REVIEW="$TMP/fake_review.sh"
+cat > "$FAKE_REVIEW" <<'FR'
+#!/usr/bin/env bash
+mkdir -p agent-project
+printf '\n## Snapshot\nfake review entry\n' >> agent-project/METRICS.md
+FR
+chmod +x "$FAKE_REVIEW"
+
+FAKE_PLAN="$TMP/fake_plan.sh"
+cat > "$FAKE_PLAN" <<'FP'
+#!/usr/bin/env bash
+printf '\n## [plan]\nfake plan entry\n' >> AGENT_SYNC.md
+FP
+chmod +x "$FAKE_PLAN"
+
+FAKE10="$TMP/fakeagent10.sh"
+cat > "$FAKE10" <<'FA10'
+#!/usr/bin/env bash
+echo "invoked" >> "$MASSOH_TEST_SENTINEL"
+echo "work" > agent-was-here.txt
+git add -A >/dev/null 2>&1 && git commit -qm "fake cron work" >/dev/null 2>&1 || true
+FA10
+chmod +x "$FAKE10"
+
+# T10a — standup appended on --run tick
+SEN10a="$TMP/sen10a"; : > "$SEN10a"; CR10a="$TMP/cr10a"; mkcronrepo "$CR10a" 1
+( cd "$CR10a" && \
+    MASSOH_TEST_SENTINEL="$SEN10a" \
+    MASSOH_AGENT_CMD="$FAKE10" \
+    MASSOH_GATE_CMD=true \
+    MASSOH_STANDUP_CMD="bash $FAKE_STANDUP" \
+    "$CRON10" once --run --no-idle-check ) >/dev/null 2>&1
+check "T10a standup appended on --run tick"   "grep -q '## \[standup\]' '$CR10a/AGENT_SYNC.md'"
+
+# T10b — standup does NOT run on dry-run
+SEN10b="$TMP/sen10b"; : > "$SEN10b"; CR10b="$TMP/cr10b"; mkcronrepo "$CR10b" 1
+( cd "$CR10b" && \
+    MASSOH_TEST_SENTINEL="$SEN10b" \
+    MASSOH_AGENT_CMD="$FAKE10" \
+    MASSOH_STANDUP_CMD="bash $FAKE_STANDUP" \
+    "$CRON10" once --no-idle-check ) >/dev/null 2>&1
+check "T10b standup NOT on dry-run"           "! grep -q '## \[standup\]' '$CR10b/AGENT_SYNC.md'"
+
+# T10c — --no-standup suppresses standup
+SEN10c="$TMP/sen10c"; : > "$SEN10c"; CR10c="$TMP/cr10c"; mkcronrepo "$CR10c" 1
+( cd "$CR10c" && \
+    MASSOH_TEST_SENTINEL="$SEN10c" \
+    MASSOH_AGENT_CMD="$FAKE10" \
+    MASSOH_GATE_CMD=true \
+    MASSOH_STANDUP_CMD="bash $FAKE_STANDUP" \
+    "$CRON10" once --run --no-idle-check --no-standup ) >/dev/null 2>&1
+check "T10c --no-standup suppresses standup"  "! grep -q '## \[standup\]' '$CR10c/AGENT_SYNC.md'"
+
+# T10d — cadence_state created and increments
+SEN10d="$TMP/sen10d"; : > "$SEN10d"; CR10d="$TMP/cr10d"; mkcronrepo "$CR10d" 2
+( cd "$CR10d" && \
+    MASSOH_TEST_SENTINEL="$SEN10d" \
+    MASSOH_AGENT_CMD="$FAKE10" \
+    MASSOH_GATE_CMD=true \
+    MASSOH_STANDUP_CMD="bash $FAKE_STANDUP" \
+    "$CRON10" once --run --no-idle-check --parallel 1 ) >/dev/null 2>&1
+( cd "$CR10d" && \
+    MASSOH_TEST_SENTINEL="$SEN10d" \
+    MASSOH_AGENT_CMD="$FAKE10" \
+    MASSOH_GATE_CMD=true \
+    MASSOH_STANDUP_CMD="bash $FAKE_STANDUP" \
+    "$CRON10" once --run --no-idle-check --parallel 1 ) >/dev/null 2>&1
+check "T10d cadence_state exists"             "[ -f '$CR10d/.agent_tasks/cron/cadence_state' ]"
+check "T10d cadence_state = 2 after 2 ticks" "[ \"\$(cat '$CR10d/.agent_tasks/cron/cadence_state' | tr -d '[:space:]')\" = '2' ]"
+
+# T10e — review+plan fire at period boundary (--period-days 0 → period_ticks clamped to 1)
+SEN10e="$TMP/sen10e"; : > "$SEN10e"; CR10e="$TMP/cr10e"; mkcronrepo "$CR10e" 1
+( cd "$CR10e" && \
+    MASSOH_TEST_SENTINEL="$SEN10e" \
+    MASSOH_AGENT_CMD="$FAKE10" \
+    MASSOH_GATE_CMD=true \
+    MASSOH_STANDUP_CMD="bash $FAKE_STANDUP" \
+    MASSOH_REVIEW_CMD="bash $FAKE_REVIEW" \
+    MASSOH_PLAN_CMD="bash $FAKE_PLAN" \
+    "$CRON10" once --run --no-idle-check --period-days 0 ) >/dev/null 2>&1
+check "T10e review fired at boundary"         "[ -f '$CR10e/agent-project/METRICS.md' ] && grep -q '## Snapshot' '$CR10e/agent-project/METRICS.md'"
+check "T10e plan fired at boundary"           "grep -q '## \[plan\]' '$CR10e/AGENT_SYNC.md'"
+check "T10e counter reset to 0 after boundary" "[ \"\$(cat '$CR10e/.agent_tasks/cron/cadence_state' | tr -d '[:space:]')\" = '0' ]"
+
+# T10f — ceremony failure does NOT abort the tick
+SEN10f="$TMP/sen10f"; : > "$SEN10f"; CR10f="$TMP/cr10f"; mkcronrepo "$CR10f" 1
+rc10f=0
+( cd "$CR10f" && \
+    MASSOH_TEST_SENTINEL="$SEN10f" \
+    MASSOH_AGENT_CMD="$FAKE10" \
+    MASSOH_GATE_CMD=true \
+    MASSOH_STANDUP_CMD=false \
+    MASSOH_REVIEW_CMD=false \
+    MASSOH_PLAN_CMD=false \
+    "$CRON10" once --run --no-idle-check --period-days 0 ) >/dev/null 2>&1 || rc10f=$?
+check "T10f ceremony failure exit 0"          "[ $rc10f -eq 0 ]"
+check "T10f backlog still marked DONE"        "grep -q '| DONE |' '$CR10f/AGENT_BACKLOG.md'"
+check "T10f injected false did NOT fall back to real standup" "! grep -q '## \[standup\]' '$CR10f/AGENT_SYNC.md'"
+
+# T10g — cron install --period-days passes through to generated crontab line
+CR10g="$TMP/cr10g"; mkcronrepo "$CR10g" 0
+install10g="$( cd "$CR10g" && "$CRON10" install --every 30m --period-days 7 2>&1 )"
+check "T10g install line contains --period-days 7" "echo '$install10g' | grep -q -- '--period-days 7'"
+
+# T10h — regression: existing T7 still passes (spot-check the key T7 behaviors)
+SEN10h="$TMP/sen10h"; : > "$SEN10h"; CR10h="$TMP/cr10h"; mkcronrepo "$CR10h" 2
+( cd "$CR10h" && MASSOH_TEST_SENTINEL="$SEN10h" MASSOH_AGENT_CMD="$FAKE10" MASSOH_GATE_CMD=true \
+    MASSOH_STANDUP_CMD="bash $FAKE_STANDUP" "$CRON10" once --run --no-idle-check ) >/dev/null 2>&1
+check "T10h regression: run still marks DONE"      "grep -q '| DONE |' '$CR10h/AGENT_BACKLOG.md'"
+check "T10h regression: run still appends [cron]"  "grep -q '\[cron\]' '$CR10h/AGENT_SYNC.md'"
+check "T10h regression: run still creates branch"  "git -C '$CR10h' branch --list 'cron/*' | grep -q cron/"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]

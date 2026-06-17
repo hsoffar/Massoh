@@ -4,15 +4,15 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-16 ( repo opted in; agent-project filled; backlog seeded )
+Last updated: 2026-06-17 ( TASK-2026-06-17-cadence-cron rev2 — APPROVED by reviewer-qa, 79/79 green )
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-None in flight. **Shipped v0.2.0** — both PRs merged to main (`814df69`) + deployed (`massoh install`,
-`doctor` healthy). Next candidate: backlog #1 (enforce license-gate mechanically).
+**TASK-2026-06-17-cadence-cron** — APPROVED by reviewer-qa (rev2 final review). All 4 conditions
+satisfied; 79/79 green. Ready for owner to merge (commit + open PR).
 
 ## Open questions (owner decision needed)
 | Question | Raised | Context |
@@ -32,6 +32,12 @@ None in flight. **Shipped v0.2.0** — both PRs merged to main (`814df69`) + dep
 | 2026-06-16 | **Merged PR #1** (discover/doctor/update) → main `778e06a`; deployed via `massoh install` | owner |
 | 2026-06-16 | TASK-version-notify: BUILD→APPROVE — version stamp + doctor update-check + CHANGELOG, 28/28 green | product-scope/impl/reviewer |
 | 2026-06-16 | **Merged PR #2** → main `814df69`; deployed v0.2.0; `doctor` healthy | owner |
+| 2026-06-17 | TASK-2026-06-17-cadence-cron: product-scope **BUILD** — wire standup/review/plan into cron tick + period boundary; route to architecture-safety | product-scope |
+| 2026-06-17 | TASK-2026-06-17-cadence-cron: arch/safety **APPROVED** — 4 conditions: counter corruption-tolerance, post-serialization placement + `\|\| true`, dry-run gate, injectable ceremony cmds | architecture-safety |
+| 2026-06-17 | TASK-2026-06-17-cadence-cron: **IMPLEMENTED** — cadence ceremonies in bin/massoh-cron, T10 (14 checks) + existing 64 checks = 78/78 green, v0.4.2 | implementer |
+| 2026-06-17 | TASK-2026-06-17-cadence-cron: **REQUEST CHANGES** — blocking: `A&&B\|\|C` anti-pattern in ceremony wrappers (lines 33–35); T10f does not test failure path. Fix `if/else` + add suppression assertion. | reviewer-qa |
+| 2026-06-17 | TASK-2026-06-17-cadence-cron: **rev2 fix** — replaced `A&&B\|\|C` with `if/else` in ceremony wrappers; added T10f assertion 3; 79/79 green | implementer |
+| 2026-06-17 | TASK-2026-06-17-cadence-cron: **APPROVE** (rev2 final) — all 4 conditions verified, 79/79 green, scope clean, safety-critical files untouched | reviewer-qa |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -41,13 +47,20 @@ None.
 |---|---|---|
 | TASK-2026-06-16-massoh-cli-verbs | merged | DONE — PR #1 → main `778e06a` |
 | TASK-2026-06-16-massoh-version-notify | merged | DONE — PR #2 → main `814df69`, deployed |
+| TASK-2026-06-17-cadence-cron | 06_review_result (rev2 APPROVE) | APPROVED — ready for owner commit + PR |
 
 ## Last handoff
 ```
-Agent: owner
-Mode: deploy
-Task: ship v0.2.0 (PR #1 + PR #2)
-Status: DONE — merged to main 814df69, deployed (massoh install), doctor healthy, version 0.2.0
-Next recommended agent: massoh-product-scope (or system-architect)
-Next action: pick backlog #1 — enforce license-to-code gate mechanically (pre-commit + CI)
+Agent: massoh-reviewer-qa (rev2 final review)
+Mode: review
+Task: TASK-2026-06-17-cadence-cron — wire cadence ceremonies into cron
+Status: APPROVED. All 4 conditions (A–D) verified. 79/79 green. 06_review_result.md written.
+Branch: feat/massoh-cadence-cron
+Key verifications:
+  - bin/massoh-cron lines 33–35: if/else wrappers confirmed (no A&&B||C)
+  - T10f assertion 3 present + passing: ! grep -q '## [standup]' (real standup suppressed)
+  - git diff --stat: 5 files, approved surface only (no safety-critical files)
+  - test/run.sh: ALL GREEN — 79 checks passed
+Next recommended agent: owner
+Next action: commit + open PR on feat/massoh-cadence-cron → main. No owner decision needed.
 ```
