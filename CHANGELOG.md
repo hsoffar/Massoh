@@ -11,6 +11,13 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.5.1] - 2026-06-17
+### Fixed
+- `massoh learn`: a code-citation mentioning "REQUEST CHANGES" (e.g. quoting `_PAT_REQUEST_CHANGES`)
+  was mistaken for a blocking finding — now only a Decision line counts (`grep -iE "decision.*…"`).
+- `massoh learn`: the "Risks seen" section printed the `## Risks` *heading* instead of the content —
+  now extracts the bullets under the heading via awk. (Both surfaced by running `learn` on Massoh itself.)
+
 ## [0.5.0] - 2026-06-17
 ### Added
 - `massoh learn` — the **learning-from-previous loop**: heuristic read-only miner over completed
