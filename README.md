@@ -1,9 +1,9 @@
 # Massoh — a portable agent operating system for Claude Code
 
 Massoh turns any repo into one run by a small, disciplined **software team of AI agents** —
-product-scope, architecture/safety, implementer, reviewer/QA, system-architect, history-maintainer —
-working through a **gated workflow** with guardrails, an auditable paper trail, scheduled
-**ceremonies**, a **learning loop**, and an optional **autonomous mode**.
+product-scope, architecture/safety, implementer, reviewer/QA, system-architect, history-maintainer,
+meta-engineer — working through a **gated workflow** with guardrails, an auditable paper trail,
+scheduled **ceremonies**, a **learning loop**, **self-measurement**, and an optional **autonomous mode**.
 
 Install it **once, globally**. Every repo you open with Claude Code then has the team available — and
 Massoh stays completely **out of the way** until you opt a repo in.
@@ -54,6 +54,7 @@ Everywhere else, Claude Code behaves normally — zero footprint.
 |---|---|
 | `massoh discover` | scan the repo and mine conventions (stack, test command, commit style, layout) into `agent-project/STANDARDS.md`. Read by the implementer + reviewer. `--force` to refresh. |
 | `massoh learn` | **the learning loop** — mine completed task packets (review findings, risks), the decision log, and git reverts/fixups; print a *lessons* report. `--write-proposals` drafts STANDARDS / memory / ADR proposals into `agent-project/LEARNINGS.proposed.md` (you promote them). Read-only, zero LLM spend. |
+| `massoh meta` | **the self-improvement loop** — mine the ledger (token outliers), rework rate, backlog drift, and repeated review findings; print a ranked bottleneck report. `--write-proposals` appends findings to `agent-project/META.proposed.md` (labeled `[meta]`; you promote them through the gate). Read-only by default, zero LLM spend. |
 
 **Cadence ceremonies** (agent-native "meetings" — read-only, no humans, no spend)
 | Command | What |
@@ -96,6 +97,7 @@ Owner idea
 | `massoh-reviewer-qa` | approve / request-changes / reject | no (read-only verify) |
 | `massoh-system-architect` | unblock, sequence, architecture calls | small safe seams |
 | `massoh-history-maintainer` | what to keep / merge / archive | no (docs only) |
+| `massoh-meta-engineer` | surface bottlenecks, rework, repeated findings; propose engine upgrades | no (PROPOSE-ONLY) |
 
 Invoke the flow with the `/start-task` skill, or call agents directly. State lives in
 `AGENT_SYNC.md` (the shared dashboard); detail lives in the task packets; decisions of record in
@@ -138,7 +140,7 @@ OPERATING_SYSTEM.md      # how the system works
 VERSION · CHANGELOG.md   # product version + changelog
 policies/                # 02 roles · 03 workflow · 04 code-rules · 05 review · 08 flags
                          # 09 GUARDRAILS · 10 history-audit · 11 packets · 12 expansion · 13 MONITORING
-claude/agents/           # the 6 massoh-* roles
+claude/agents/           # the 7 massoh-* roles
 claude/skills/           # start-task · sync · close-task · history-cleanup
 templates/               # CLAUDE (project + global-block) · CHARTER · NON_NEGOTIABLES · STANDARDS
                          # strategy/metrics/now-next · AGENT_SYNC · AGENT_BACKLOG · MEMORY_SCHEMA

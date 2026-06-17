@@ -12,6 +12,7 @@ replace them.
 | `massoh-reviewer-qa` | approve / request-changes / reject | no (read-only verify) | `06` review, sync |
 | `massoh-system-architect` | unblock, sequence, architecture calls | small safe seams only | ADRs, backlog, packets, sync |
 | `massoh-history-maintainer` | what to keep / merge / archive | no (docs only) | docs, sync, audit ledger |
+| `massoh-meta-engineer` | surfaces bottlenecks/rework/repeated findings (PROPOSE-ONLY) | no (read-only miner) | `agent-project/META.proposed.md` (append, `[meta]` label) |
 
 ## Permission spine
 - Only `massoh-implementer` (and, narrowly, `massoh-system-architect`) edit product code — and only

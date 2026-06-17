@@ -22,8 +22,10 @@ re-syncs `AGENT_SYNC.md`. Full rules: `~/.claude/agent-os/docs/AUTONOMOUS_CRON.m
 ## Queue (top = next)
 | # | Pri | Item | Why | Status |
 |---|-----|------|-----|--------|
-| 1 | P1 | Wire cadence into `cron` (tick → `standup`; period → `review` + `plan`) | Finish v0.4 — scheduled, unattended ceremonies | TODO |
-| 2 | P1 | Enforce license-to-code gate (pre-commit/pre-push + CI) | The one hard gate is honor-system today; make it mechanical | TODO |
+| 1 | P1 | **`massoh-meta` (self-improvement engineer)** — watch Massoh's own operation (ledger/rework/cost/comms/over-process) → bottleneck findings → gated engine upgrades → new version. See [[massoh-meta-improvement]]. (IN FLIGHT this branch) | The system improves its own process, shipped as versions | DOING |
+| 2 | P1 | **`massoh-intake` (idea triage)** — on a task request: auto-queue + auto-allocate priority (unless stated) + guarantee **closure** (record/remember/reprioritize); absorb a fast-firing owner without dropping ideas. See [[massoh-idea-intake]]. | Owner fires ideas fast; nothing should be lost or mis-ordered | TODO |
+| 3 | P1 | Reconcile AGENT_BACKLOG across branches (shipped items still TODO; meta-item on another branch) | Backlog drift — exactly what `massoh-meta`/`intake` should auto-fix | TODO |
+| 4 | P1 | Enforce license-to-code gate (pre-commit/pre-push + CI) | The one hard gate is honor-system today; make it mechanical | TODO |
 | 3 | P2 | Emit `AGENTS.md` from the 6 roles | Multi-harness portability (Cursor/Codex/Antigravity) | TODO |
 | 4 | P3 | Profiles + single `config.yml` | Project archetypes; consolidate config | TODO |
 | 5 | P3 | Upgrade `test/run.sh` → `bats`; commit-conv ratio in discover | Nicer test UX; fewer discover false-negatives | TODO |

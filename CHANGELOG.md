@@ -11,6 +11,41 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.8.0] - 2026-06-17
+### Added
+- **`massoh meta`** — the self-improvement loop: read-only heuristic miner (zero LLM spend).
+  - **Finding 1 — Ledger cost outliers:** computes global mean tokens/row across `ledger.tsv`; flags
+    any row where tokens > `OUTLIER_FACTOR` (2) × mean as an outlier stage candidate.
+  - **Finding 2 — Rework rate:** counts packets where `06_review_result.md` has a
+    `Decision.*REQUEST CHANGES` line; reports `rework_rate=%`. Flags if > 25%.
+  - **Finding 3 — Backlog drift:** cross-references `AGENT_BACKLOG.md` TODO keywords against
+    `AGENT_SYNC.md` decision log entries containing DONE/APPROVE/merged.
+  - **Finding 4 — Repeated review findings:** counts keywords (5+ chars) in `## Blocking` sections
+    across all `06_review_result.md` files; surfaces any class seen in >= `REPEAT_THRESHOLD` (3)
+    packets as a "promote to enforced check" candidate.
+  - Named constants: `OUTLIER_FACTOR=2`, `REPEAT_THRESHOLD=3` (auditable, patchable without re-read).
+  - Degrades gracefully: absent ledger/packets/backlog → `(no X data)`, exit 0, no file created.
+  - `--write-proposals`: appends `## [meta] <timestamp>` block to `agent-project/META.proposed.md`
+    (append-only `>>`; the `[meta]` label namespaces vs. future `[intake]` entries; NEVER writes
+    to STANDARDS/memory/adr/ledger/backlog/sync).
+  - `--no-write` (default): read-only, prints to stdout only.
+  - Non-Massoh-project guard: non-zero exit + "not a Massoh project" if no `.massoh` / `agent-project/`.
+  - All `grep`/`awk`/`git` invocations guarded with `|| true` (set -euo pipefail safe).
+  - Division-by-zero guarded in awk (mirrors `cmd_ledger` lines 766–777).
+  - M5: standalone miner — does NOT call `cmd_learn`, `cmd_recommend`, or `cmd_ledger` internally.
+- **`massoh-meta-engineer` role agent** (`claude/agents/massoh-meta-engineer.md`) — 7th agent in
+  the team. Auto-installs via the existing `massoh-*.md` glob (no `manifest.yml` change). A
+  PROPOSE-ONLY process/efficiency engineer: reads `massoh meta` output + ledger + packets; files
+  engine-upgrade proposals to `agent-project/META.proposed.md` (labeled `[meta]`); routes all
+  engine changes through the gate; never directly edits STANDARDS/memory/bin/massoh/safety files;
+  never auto-merges engine changes.
+- **`massoh doctor`** now finds 7 `massoh-*` agents (glob-enumerated dynamically; no code change).
+- **Doc updates** (additive):
+  - `policies/02_AGENT_ROLES.md`: 6 → 7 roles (added `massoh-meta-engineer` row).
+  - `OPERATING_SYSTEM.md`: §4 routing updated to reference `@meta-engineer` + description of the
+    7th role.
+  - `README.md`: role table + introductory text + CLI reference updated to 7 roles.
+
 ## [0.7.0] - 2026-06-17
 ### Added
 - **`massoh ledger`** — self-measuring primitive: cost capture and aggregated reporting.

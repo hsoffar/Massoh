@@ -897,6 +897,137 @@ check "T15l manifest.yml checksum unchanged after T15" "[ '$md5_manifest_before'
 
 # T15m — full suite green (regression guard: enforced by overall harness exit code)
 
+echo "== T-meta (Slice 1): massoh meta — heuristic miner =="
+
+# Helper: create a minimal Massoh project for meta tests
+mkmetarepo() {
+  local d="$1"
+  mkdir -p "$d"
+  ( cd "$d" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+  echo x > "$d/.massoh"
+  mkdir -p "$d/agent-project" "$d/.agent_tasks"
+  printf '# AGENT_BACKLOG\n\n| # | Pri | Item | Why | Status |\n|---|---|---|---|---|\n' > "$d/AGENT_BACKLOG.md"
+  printf '# AGENT_SYNC\n\n## Decision log\n| Date | Decision | By |\n|---|---|---|\n' > "$d/AGENT_SYNC.md"
+  ( cd "$d" && git add -A && git commit -qm "feat: seed meta repo" )
+}
+
+# T-meta-A: Ledger with implementer tokens = 10x mean of other 2 stages → stdout surfaces outlier
+MRA="$TMP/mra"; mkmetarepo "$MRA"
+mkdir -p "$MRA/.agent_tasks"
+# scope=100, arch=100, implementer=1000 → mean(scope+arch)=100, implementer is 10x
+printf '%s\t%s\t%s\t%s\t%s\n' "2026-06-17T00:00:00Z" "TASK-1" "scope"       "100"  "30"  >> "$MRA/.agent_tasks/ledger.tsv"
+printf '%s\t%s\t%s\t%s\t%s\n' "2026-06-17T00:01:00Z" "TASK-1" "arch"        "100"  "30"  >> "$MRA/.agent_tasks/ledger.tsv"
+printf '%s\t%s\t%s\t%s\t%s\n' "2026-06-17T00:02:00Z" "TASK-1" "implementer" "1000" "300" >> "$MRA/.agent_tasks/ledger.tsv"
+oma="$( cd "$MRA" && "$MASSOH" meta 2>&1 )"
+check "T-meta-A stdout contains 'implementer'"  "echo '$oma' | grep -q 'implementer'"
+check "T-meta-A stdout contains 'outlier'"      "echo '$oma' | grep -qi 'outlier'"
+
+# T-meta-B: 3 of 5 packets with REQUEST CHANGES → rework rate >= 60%
+MRB="$TMP/mrb"; mkmetarepo "$MRB"
+for i in 1 2 3; do
+  mkdir -p "$MRB/.agent_tasks/TASK-rc$i"
+  printf '# 06\n\n## Decision: REQUEST CHANGES\nsome feedback\n' > "$MRB/.agent_tasks/TASK-rc$i/06_review_result.md"
+done
+for i in 4 5; do
+  mkdir -p "$MRB/.agent_tasks/TASK-ok$i"
+  printf '# 06\n\n## Decision: APPROVE\nLooks good.\n' > "$MRB/.agent_tasks/TASK-ok$i/06_review_result.md"
+done
+omb="$( cd "$MRB" && "$MASSOH" meta 2>&1 )"
+check "T-meta-B rework_rate >= 60%"  "echo '$omb' | grep -oE 'rework_rate=[0-9]+' | grep -qE '=[6-9][0-9]|=100'"
+
+# T-meta-C: AGENT_BACKLOG has foo-feature TODO; AGENT_SYNC has foo-feature DONE → drift detected
+MRC="$TMP/mrc"; mkmetarepo "$MRC"
+printf '| 1 | P1 | foo-feature | why | TODO |\n' >> "$MRC/AGENT_BACKLOG.md"
+printf '| 2026-06-17 | foo-feature: DONE — merged | owner |\n' >> "$MRC/AGENT_SYNC.md"
+omc="$( cd "$MRC" && "$MASSOH" meta 2>&1 )"
+check "T-meta-C stdout mentions 'foo' in drift finding"  "echo '$omc' | grep -qi 'foo'"
+
+# T-meta-D: exactly 3 packets each with "shellcheck" in Blocking section → surfaces as repeated finding
+MRD="$TMP/mrd"; mkmetarepo "$MRD"
+for i in 1 2 3; do
+  mkdir -p "$MRD/.agent_tasks/TASK-d$i"
+  printf '# 06\n\n## Blocking\n- shellcheck lint error found in cmd_meta\n\n## Non-blocking\n(none)\n' \
+    > "$MRD/.agent_tasks/TASK-d$i/06_review_result.md"
+done
+omd="$( cd "$MRD" && "$MASSOH" meta 2>&1 )"
+check "T-meta-D stdout surfaces 'shellcheck' as repeated finding"  "echo '$omd' | grep -qi 'shellcheck'"
+
+# T-meta-E: no ledger.tsv → exit 0; stdout contains "(no ledger data)"; no file created
+MRE="$TMP/mre"; mkmetarepo "$MRE"
+rce=0
+ome="$( cd "$MRE" && "$MASSOH" meta 2>&1 )" || rce=$?
+check "T-meta-E no-ledger exit 0"                           "[ $rce -eq 0 ]"
+check "T-meta-E stdout contains '(no ledger data)'"         "echo '$ome' | grep -q 'no ledger data'"
+check "T-meta-E META.proposed.md NOT created"               "[ ! -f '$MRE/agent-project/META.proposed.md' ]"
+
+# T-meta-F: .massoh present, .agent_tasks empty → exit 0; all 4 sections degrade
+MRF="$TMP/mrf"; mkmetarepo "$MRF"
+# Remove AGENT_BACKLOG.md and AGENT_SYNC.md to test full degrade
+rm -f "$MRF/AGENT_BACKLOG.md"
+rcf=0
+omf="$( cd "$MRF" && "$MASSOH" meta 2>&1 )" || rcf=$?
+check "T-meta-F empty-repo exit 0"                          "[ $rcf -eq 0 ]"
+check "T-meta-F Finding 1 degrades '(no ledger data)'"      "echo '$omf' | grep -q 'no ledger data'"
+check "T-meta-F Finding 2 degrades '(no packet data)'"      "echo '$omf' | grep -q 'no packet data'"
+check "T-meta-F Finding 3 degrades '(no backlog file)'"     "echo '$omf' | grep -q 'no backlog file'"
+check "T-meta-F Finding 4 degrades '(no packet data)'"      "echo '$omf' | grep -qi 'no packet data'"
+
+# T-meta-G: run without --write-proposals; META.proposed.md NOT created or modified
+# Uses the find-based directory-snapshot approach (NOT md5sum '$var' with single-quoted path)
+MRG="$TMP/mrg"; mkmetarepo "$MRG"
+printf '%s\t%s\t%s\t%s\t%s\n' "2026-06-17T00:00:00Z" "TASK-1" "scope" "100" "30" >> "$MRG/.agent_tasks/ledger.tsv"
+bg="$(cd "$MRG" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+( cd "$MRG" && "$MASSOH" meta >/dev/null 2>&1 )
+ag="$(cd "$MRG" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+check "T-meta-G no --write-proposals: META.proposed.md NOT created or modified"  "[ '$bg' = '$ag' ]"
+
+# T-meta-H: --write-proposals creates META.proposed.md with ## [meta] header; second run appends
+MRH="$TMP/mrh"; mkmetarepo "$MRH"
+( cd "$MRH" && "$MASSOH" meta --write-proposals >/dev/null 2>&1 )
+check "T-meta-H META.proposed.md created"                   "[ -f '$MRH/agent-project/META.proposed.md' ]"
+check "T-meta-H contains ## [meta] header"                  "grep -q '## \[meta\]' '$MRH/agent-project/META.proposed.md'"
+lines1h="$(wc -l < "$MRH/agent-project/META.proposed.md" 2>/dev/null || echo 0)"
+( cd "$MRH" && "$MASSOH" meta --write-proposals >/dev/null 2>&1 )
+lines2h="$(wc -l < "$MRH/agent-project/META.proposed.md" 2>/dev/null || echo 0)"
+check "T-meta-H second run appends (line count increased)"   "[ \"$lines2h\" -gt \"$lines1h\" ]"
+# original content intact (first ## [meta] block still present)
+check "T-meta-H original content intact (2 [meta] blocks)"  "[ \"\$(grep -c '## \[meta\]' '$MRH/agent-project/META.proposed.md')\" -eq 2 ]"
+
+# T-meta-I: massoh meta dispatched from main case; returns expected exit
+MRI="$TMP/mri"; mkmetarepo "$MRI"
+rci=0
+( cd "$MRI" && "$MASSOH" meta >/dev/null 2>&1 ) || rci=$?
+check "T-meta-I meta dispatched; exit 0 (degrade path)"     "[ $rci -eq 0 ]"
+
+# T-meta-J: non-Massoh-project → non-zero exit + "not a Massoh project" message; no file created
+MRJ="$TMP/mrj"; mkdir -p "$MRJ"
+# no .massoh, no agent-project/
+rcj=0
+ej="$( cd "$MRJ" && "$MASSOH" meta 2>&1 >/dev/null )" || rcj=$?
+check "T-meta-J non-Massoh-project: non-zero exit"          "[ $rcj -ne 0 ]"
+check "T-meta-J non-Massoh-project: 'not a Massoh project' message"  "[ -n '$ej' ]"
+check "T-meta-J no file created"                             "[ ! -f '$MRJ/agent-project/META.proposed.md' ]"
+
+echo "== T-meta (Slice 2): massoh-meta-engineer agent + doc updates =="
+
+# T-meta-K: massoh install wires massoh-meta-engineer.md; massoh doctor exits 0 with 7 "ok agent" lines
+CCK="$(newcc)"
+CLAUDE_CONFIG_DIR="$CCK" "$MASSOH" install >/dev/null 2>&1
+check "T-meta-K massoh-meta-engineer.md installed"           "[ -f '$CCK/agents/massoh-meta-engineer.md' ]"
+rck=0
+CLAUDE_CONFIG_DIR="$CCK" "$MASSOH" doctor --offline >/dev/null 2>&1 || rck=$?
+check "T-meta-K doctor exits 0 after install"                "[ $rck -eq 0 ]"
+# Count "ok   agent massoh-" lines — must be 7 (one per massoh-* agent)
+agent_ok_count="$(CLAUDE_CONFIG_DIR="$CCK" "$MASSOH" doctor --offline 2>&1 | grep -cE 'ok +agent massoh-' || true)"
+check "T-meta-K doctor shows 7 ok agent lines"               "[ \"$agent_ok_count\" -eq 7 ]"
+
+# T-meta-L: policies/02_AGENT_ROLES.md has exactly 7 data rows (was 6)
+data_rows_l="$(grep -cE '^\| .massoh-' "$REPO_ROOT/policies/02_AGENT_ROLES.md" 2>/dev/null || true)"
+check "T-meta-L 02_AGENT_ROLES.md has exactly 7 data rows"  "[ \"$data_rows_l\" -eq 7 ]"
+
+# T-meta-M: OPERATING_SYSTEM.md references "meta" or "massoh-meta-engineer"
+check "T-meta-M OPERATING_SYSTEM.md references meta role"   "grep -qiE 'meta|massoh-meta-engineer' '$REPO_ROOT/OPERATING_SYSTEM.md'"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]
