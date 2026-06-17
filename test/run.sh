@@ -481,6 +481,299 @@ blk11k="$(printf '%s\n' "$lo11k" | awk '/Blocking findings/{f=1;next} /Non-block
 check "T11k code-citation NOT surfaced as blocking"    "! echo '$blk11k' | grep -q 'code citation'"
 check "T11k risks show CONTENT not heading"            "echo '$lo11k' | grep -q 'offline cron path can hang'"
 
+echo "== T12: cron tick-time fix =="
+CRON12="$REPO_ROOT/bin/massoh-cron"
+
+# T12a — --every 60m resolves period_ticks=168 for 7-day period (not 336)
+# Pre-set cadence_state=167 → next tick (168th) should fire review (168 >= 168)
+FAKE_REVIEW12a="$TMP/fake_review12a.sh"
+cat > "$FAKE_REVIEW12a" <<'FR12A'
+#!/usr/bin/env bash
+mkdir -p agent-project
+printf '\n## Snapshot\nfake review 12a\n' >> agent-project/METRICS.md
+FR12A
+chmod +x "$FAKE_REVIEW12a"
+FAKE12="$TMP/fakeagent12.sh"
+cat > "$FAKE12" <<'FA12'
+#!/usr/bin/env bash
+echo "invoked" >> "$MASSOH_TEST_SENTINEL"
+echo "work" > agent-was-here.txt
+git add -A >/dev/null 2>&1 && git commit -qm "fake cron work" >/dev/null 2>&1 || true
+FA12
+chmod +x "$FAKE12"
+
+CR12a="$TMP/cr12a"; mkcronrepo "$CR12a" 1
+mkdir -p "$CR12a/.agent_tasks/cron"
+printf '167\n' > "$CR12a/.agent_tasks/cron/cadence_state"
+SEN12a="$TMP/sen12a"; : > "$SEN12a"
+( cd "$CR12a" && \
+    MASSOH_TEST_SENTINEL="$SEN12a" \
+    MASSOH_AGENT_CMD="$FAKE12" \
+    MASSOH_GATE_CMD=true \
+    MASSOH_STANDUP_CMD=true \
+    MASSOH_REVIEW_CMD="bash $FAKE_REVIEW12a" \
+    MASSOH_PLAN_CMD=true \
+    "$CRON12" once --run --no-idle-check --every 60m --period-days 7 ) >/dev/null 2>&1
+check "T12a --every 60m fires review at tick 168 (period_ticks=168, not 336)" \
+  "[ -f '$CR12a/agent-project/METRICS.md' ] && grep -q 'fake review 12a' '$CR12a/agent-project/METRICS.md'"
+# Confirm it reset to 0 (proving boundary was reached)
+check "T12a cadence_state reset to 0 after boundary (confirms 168, not 336)" \
+  "[ \"\$(cat '$CR12a/.agent_tasks/cron/cadence_state' | tr -d '[:space:]')\" = '0' ]"
+
+# T12b — --every 30m (default) regression: period_ticks=336 for 7-day period
+# Pre-set cadence_state=335 → tick 336 fires review
+FAKE_REVIEW12b="$TMP/fake_review12b.sh"
+cat > "$FAKE_REVIEW12b" <<'FR12B'
+#!/usr/bin/env bash
+mkdir -p agent-project
+printf '\n## Snapshot\nfake review 12b\n' >> agent-project/METRICS.md
+FR12B
+chmod +x "$FAKE_REVIEW12b"
+CR12b="$TMP/cr12b"; mkcronrepo "$CR12b" 1
+mkdir -p "$CR12b/.agent_tasks/cron"
+printf '335\n' > "$CR12b/.agent_tasks/cron/cadence_state"
+SEN12b="$TMP/sen12b"; : > "$SEN12b"
+( cd "$CR12b" && \
+    MASSOH_TEST_SENTINEL="$SEN12b" \
+    MASSOH_AGENT_CMD="$FAKE12" \
+    MASSOH_GATE_CMD=true \
+    MASSOH_STANDUP_CMD=true \
+    MASSOH_REVIEW_CMD="bash $FAKE_REVIEW12b" \
+    MASSOH_PLAN_CMD=true \
+    "$CRON12" once --run --no-idle-check --every 30m --period-days 7 ) >/dev/null 2>&1
+check "T12b --every 30m fires review at tick 336 (default regression, period_ticks=336)" \
+  "[ -f '$CR12b/agent-project/METRICS.md' ] && grep -q 'fake review 12b' '$CR12b/agent-project/METRICS.md'"
+check "T12b cadence_state reset to 0 after boundary (confirms 336)" \
+  "[ \"\$(cat '$CR12b/.agent_tasks/cron/cadence_state' | tr -d '[:space:]')\" = '0' ]"
+
+# T12c — dry-run output does NOT contain tick_duration (Condition A2)
+CR12c="$TMP/cr12c"; mkcronrepo "$CR12c" 1
+out12c="$( cd "$CR12c" && MASSOH_AGENT_CMD="$FAKE12" "$CRON12" once --no-idle-check 2>&1 )"
+check "T12c dry-run does NOT contain tick_duration" \
+  "! echo '$out12c' | grep -q 'tick_duration'"
+
+# T12d — run mode output DOES contain tick_duration= (Condition A2)
+CR12d="$TMP/cr12d"; mkcronrepo "$CR12d" 1
+SEN12d="$TMP/sen12d"; : > "$SEN12d"
+out12d="$( cd "$CR12d" && \
+    MASSOH_TEST_SENTINEL="$SEN12d" \
+    MASSOH_AGENT_CMD="$FAKE12" \
+    MASSOH_GATE_CMD=true \
+    MASSOH_STANDUP_CMD=true \
+    "$CRON12" once --run --no-idle-check --every 30m 2>&1 )"
+check "T12d run mode output contains tick_duration=" \
+  "echo '$out12d' | grep -q 'tick_duration='"
+
+# T12e — cron install --every 15m generates crontab line with --every 15m (Condition A5)
+CR12e="$TMP/cr12e"; mkcronrepo "$CR12e" 0
+install12e="$( cd "$CR12e" && "$CRON12" install --every 15m 2>&1 )"
+check "T12e cron install --every 15m contains '--every 15m' in generated line" \
+  "echo '$install12e' | grep -q -- '--every 15m'"
+
+echo "== T13: review-v2 KPIs =="
+
+# Helper: create a review fixture repo
+mkrevrepo13() {
+  local d="$1"
+  mkdir -p "$d"
+  ( cd "$d" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+  echo x > "$d/.massoh"
+  mkdir -p "$d/.agent_tasks"
+  { echo "| # | Pri | Item | Why | Status |"; echo "|---|---|---|---|---|"; echo "| 1 | P1 | x | y | DONE |"; } > "$d/AGENT_BACKLOG.md"
+  ( cd "$d" && git add -A && git commit -qm "feat: seed" )
+}
+
+# Helper: add a packet with optional REQUEST CHANGES in 06
+addpacket13() {
+  local repo="$1" task="$2" has_rc="${3:-0}"
+  mkdir -p "$repo/.agent_tasks/$task"
+  printf '# 00 — Request\n**Date:** 2026-06-10\n' > "$repo/.agent_tasks/$task/00_request.md"
+  # Commit 00 first so it gets an earlier git timestamp
+  ( cd "$repo" && git add ".agent_tasks/$task/00_request.md" && git commit -qm "feat: add $task request" )
+  if [ "$has_rc" = 1 ]; then
+    printf '# 06 — Review Result\n\n## Decision: REQUEST CHANGES\nSome feedback here.\n' > "$repo/.agent_tasks/$task/06_review_result.md"
+  else
+    printf '# 06 — Review Result\n\n## Decision: APPROVE\nLooks good.\n' > "$repo/.agent_tasks/$task/06_review_result.md"
+  fi
+  ( cd "$repo" && git add ".agent_tasks/$task/06_review_result.md" && git commit -qm "feat: add $task review" )
+}
+
+# T13a — single packet with both files: output contains cycle_avg_days=, rework_pct=, throughput/wk=
+RV13a="$TMP/rv13a"; mkrevrepo13 "$RV13a"
+addpacket13 "$RV13a" "TASK-fixture-a" 1
+ro13a="$( cd "$RV13a" && "$MASSOH" review --no-write 2>&1 )"
+check "T13a output contains cycle_avg_days=" \
+  "echo '$ro13a' | grep -q 'cycle_avg_days='"
+check "T13a output contains rework_pct=" \
+  "echo '$ro13a' | grep -q 'rework_pct='"
+check "T13a output contains throughput/wk=" \
+  "echo '$ro13a' | grep -q 'throughput/wk='"
+
+# T13b — rework_pct=100 on single packet with REQUEST CHANGES
+check "T13b rework_pct=100 on single REQUEST CHANGES packet" \
+  "echo '$ro13a' | grep -q 'rework_pct=100'"
+
+# T13c — rework_pct=50 on two packets (one REQUEST CHANGES, one APPROVE)
+RV13c="$TMP/rv13c"; mkrevrepo13 "$RV13c"
+addpacket13 "$RV13c" "TASK-fixture-a" 1
+addpacket13 "$RV13c" "TASK-fixture-b" 0
+ro13c="$( cd "$RV13c" && "$MASSOH" review --no-write 2>&1 )"
+check "T13c rework_pct=50 on two packets (1 RC, 1 APPROVE)" \
+  "echo '$ro13c' | grep -q 'rework_pct=50'"
+
+# T13d — packet missing 06 excluded from cycle time + rework (no crash)
+RV13d="$TMP/rv13d"; mkrevrepo13 "$RV13d"
+addpacket13 "$RV13d" "TASK-fixture-a" 1
+# Add incomplete packet: only 00, no 06
+mkdir -p "$RV13d/.agent_tasks/TASK-incomplete"
+printf '# 00 — Request\n**Date:** 2026-06-10\n' > "$RV13d/.agent_tasks/TASK-incomplete/00_request.md"
+( cd "$RV13d" && git add ".agent_tasks/TASK-incomplete/00_request.md" && git commit -qm "feat: incomplete" )
+rc13d=0
+ro13d="$( cd "$RV13d" && "$MASSOH" review --no-write 2>&1 )" || rc13d=$?
+check "T13d exit 0 with incomplete packet (no 06)" "[ $rc13d -eq 0 ]"
+check "T13d rework_pct still 100 (1 complete packet with RC)" \
+  "echo '$ro13d' | grep -q 'rework_pct=100'"
+
+# T13e — division-by-zero guard: 0 reviewed packets
+RV13e="$TMP/rv13e"; mkrevrepo13 "$RV13e"
+# Add packet with only 00 (no 06) — total_reviewed = 0
+mkdir -p "$RV13e/.agent_tasks/TASK-incomplete"
+printf '# 00 — Request\n**Date:** 2026-06-10\n' > "$RV13e/.agent_tasks/TASK-incomplete/00_request.md"
+( cd "$RV13e" && git add ".agent_tasks/TASK-incomplete/00_request.md" && git commit -qm "feat: no-06" )
+rc13e=0
+ro13e="$( cd "$RV13e" && "$MASSOH" review --no-write 2>&1 )" || rc13e=$?
+check "T13e exit 0 with 0 reviewed packets" "[ $rc13e -eq 0 ]"
+check "T13e rework_pct=0 when no reviewed packets" \
+  "echo '$ro13e' | grep -qE 'rework_pct=(0|n/a)'"
+
+# T13f — METRICS.md snapshot gains new fields; append-only (two runs = two snapshots)
+RV13f="$TMP/rv13f"; mkrevrepo13 "$RV13f"
+addpacket13 "$RV13f" "TASK-fixture-a" 0
+( cd "$RV13f" && "$MASSOH" review >/dev/null 2>&1 )
+check "T13f METRICS.md snapshot has cycle_avg_days field" \
+  "grep -q 'cycle_avg_days=' '$RV13f/agent-project/METRICS.md'"
+check "T13f METRICS.md snapshot has rework_pct field" \
+  "grep -q 'rework_pct=' '$RV13f/agent-project/METRICS.md'"
+check "T13f METRICS.md snapshot has throughput/wk field" \
+  "grep -q 'throughput/wk=' '$RV13f/agent-project/METRICS.md'"
+( cd "$RV13f" && "$MASSOH" review >/dev/null 2>&1 )
+check "T13f two runs = two snapshots (append-only)" \
+  "[ \"\$(grep -c '## Snapshot' '$RV13f/agent-project/METRICS.md')\" -eq 2 ]"
+
+# T13g — --no-write leaves checksum unchanged (Condition B5, mirrors T8 pattern)
+RV13g="$TMP/rv13g"; mkrevrepo13 "$RV13g"
+addpacket13 "$RV13g" "TASK-fixture-a" 1
+b13g="$(cd "$RV13g" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+( cd "$RV13g" && "$MASSOH" review --no-write >/dev/null 2>&1 )
+a13g="$(cd "$RV13g" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+check "T13g --no-write leaves checksum unchanged" "[ '$b13g' = '$a13g' ]"
+
+# T13h — existing T8 tests remain green (enforced by harness; no explicit new test needed)
+# (The harness exit code and prior T8 checks above confirm this.)
+
+echo "== T14: massoh recommend =="
+
+# Helper: create a recommend fixture repo
+mkrecommrepo() {
+  local d="$1"
+  mkdir -p "$d"
+  ( cd "$d" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+  echo x > "$d/.massoh"
+  mkdir -p "$d/agent-project"
+  printf '# AGENT_SYNC\n\n## Decision log\n' > "$d/AGENT_SYNC.md"
+  ( cd "$d" && git add -A && git commit -qm "feat: seed" )
+}
+
+# Helper: write a METRICS.md with 2 snapshots given field values
+# Usage: write_metrics2 <file> <snap1-fields> <snap2-fields>
+# Fields as "key=val key2=val2 ..." strings
+write_metrics2() {
+  local f="$1" f1="$2" f2="$3"
+  {
+    printf '\n## Snapshot 2026-06-10T00:00:00Z (v0.5.1)\n'
+    printf '%s\n' '- packets: 1 total'
+    printf '%s\n' $f1 | sed 's/^/- /'
+    printf '\n## Snapshot 2026-06-17T00:00:00Z (v0.5.1)\n'
+    printf '%s\n' '- packets: 2 total'
+    printf '%s\n' $f2 | sed 's/^/- /'
+  } > "$f"
+}
+
+# T14a — R1 fires when cycle_avg_days rises across 2 snapshots
+RV14a="$TMP/rv14a"; mkrecommrepo "$RV14a"
+write_metrics2 "$RV14a/agent-project/METRICS.md" \
+  "cycle_avg_days=2 rework_pct=0 throughput/wk=1 reverts=0 backlog_todo=3" \
+  "cycle_avg_days=5 rework_pct=0 throughput/wk=1 reverts=0 backlog_todo=3"
+ro14a="$( cd "$RV14a" && "$MASSOH" recommend 2>&1 )"
+check "T14a R1 fires on rising cycle_avg_days" \
+  "echo '$ro14a' | grep -qi 'Cycle time climbing'"
+
+# T14b — R2 fires when rework_pct > 25
+RV14b="$TMP/rv14b"; mkrecommrepo "$RV14b"
+write_metrics2 "$RV14b/agent-project/METRICS.md" \
+  "cycle_avg_days=1 rework_pct=50 throughput/wk=1 reverts=0 backlog_todo=2" \
+  "cycle_avg_days=1 rework_pct=50 throughput/wk=1 reverts=0 backlog_todo=2"
+ro14b="$( cd "$RV14b" && "$MASSOH" recommend 2>&1 )"
+check "T14b R2 fires on rework_pct=50 (> 25)" \
+  "echo '$ro14b' | grep -qi 'High rework rate'"
+
+# T14c — R3 fires when reverts > 0
+RV14c="$TMP/rv14c"; mkrecommrepo "$RV14c"
+write_metrics2 "$RV14c/agent-project/METRICS.md" \
+  "cycle_avg_days=1 rework_pct=0 throughput/wk=1 reverts=2 backlog_todo=2" \
+  "cycle_avg_days=1 rework_pct=0 throughput/wk=1 reverts=2 backlog_todo=2"
+ro14c="$( cd "$RV14c" && "$MASSOH" recommend 2>&1 )"
+check "T14c R3 fires on reverts=2" \
+  "echo '$ro14c' | grep -qi 'Revert spike'"
+
+# T14d — R4 fires when TODO grows and throughput/wk is flat
+RV14d="$TMP/rv14d"; mkrecommrepo "$RV14d"
+write_metrics2 "$RV14d/agent-project/METRICS.md" \
+  "cycle_avg_days=1 rework_pct=0 throughput/wk=2 reverts=0 backlog_todo=5" \
+  "cycle_avg_days=1 rework_pct=0 throughput/wk=2 reverts=0 backlog_todo=8"
+ro14d="$( cd "$RV14d" && "$MASSOH" recommend 2>&1 )"
+check "T14d R4 fires when TODO grows and throughput/wk flat" \
+  "echo '$ro14d' | grep -qi 'Throughput bottleneck'"
+
+# T14e — R5 fires on empty/missing METRICS.md
+RV14e="$TMP/rv14e"; mkrecommrepo "$RV14e"
+ro14e="$( cd "$RV14e" && "$MASSOH" recommend 2>&1 )"
+check "T14e R5 fires on missing METRICS.md (no snapshots)" \
+  "echo '$ro14e' | grep -qi 'No METRICS.md snapshots'"
+
+# T14f — "No issues detected" when no rules fire
+RV14f="$TMP/rv14f"; mkrecommrepo "$RV14f"
+write_metrics2 "$RV14f/agent-project/METRICS.md" \
+  "cycle_avg_days=3 rework_pct=0 throughput/wk=3 reverts=0 backlog_todo=5" \
+  "cycle_avg_days=2 rework_pct=0 throughput/wk=4 reverts=0 backlog_todo=5"
+ro14f="$( cd "$RV14f" && "$MASSOH" recommend 2>&1 )"
+check "T14f 'No issues detected' when no rules fire" \
+  "echo '$ro14f' | grep -qi 'No issues detected'"
+
+# T14g — --write appends [recommend] to AGENT_SYNC.md; default does NOT write
+RV14g="$TMP/rv14g"; mkrecommrepo "$RV14g"
+write_metrics2 "$RV14g/agent-project/METRICS.md" \
+  "cycle_avg_days=1 rework_pct=0 throughput/wk=1 reverts=0 backlog_todo=2" \
+  "cycle_avg_days=1 rework_pct=0 throughput/wk=1 reverts=0 backlog_todo=2"
+# Default (no --write): AGENT_SYNC.md must be unchanged
+b14g="$(cd "$RV14g" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+( cd "$RV14g" && "$MASSOH" recommend >/dev/null 2>&1 )
+a14g="$(cd "$RV14g" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+check "T14g default (no --write) does NOT touch AGENT_SYNC.md" "[ '$b14g' = '$a14g' ]"
+# --write: AGENT_SYNC.md must gain [recommend] block
+( cd "$RV14g" && "$MASSOH" recommend --write >/dev/null 2>&1 )
+check "T14g --write appends [recommend] block to AGENT_SYNC.md" \
+  "grep -q '\[recommend\]' '$RV14g/AGENT_SYNC.md'"
+
+# T14h — awk parse failure on malformed METRICS.md degrades gracefully (exit 0, no corrupt file)
+RV14h="$TMP/rv14h"; mkrecommrepo "$RV14h"
+printf 'this is completely malformed\nno snapshots here at all\n' > "$RV14h/agent-project/METRICS.md"
+rc14h=0
+( cd "$RV14h" && "$MASSOH" recommend >/dev/null 2>&1 ) || rc14h=$?
+check "T14h malformed METRICS.md exits 0 (no crash)" "[ $rc14h -eq 0 ]"
+
+# T14i — all existing tests remain green (regression guard: harness exit code above enforces this)
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]

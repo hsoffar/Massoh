@@ -77,14 +77,17 @@ Add a real test, run the local gate, open a PR. Do NOT merge. Do NOT touch desig
 }
 
 cmd_once(){
-  local mode=dry parallel=1 automerge=0 period_days=7 no_standup=0
+  local mode=dry parallel=1 automerge=0 period_days=7 no_standup=0 every="30m"
   while [ $# -gt 0 ]; do case "$1" in
     --run) mode=run;; --dry-run) mode=dry;; --auto-merge) automerge=1;;
     --parallel) shift; parallel="${1:-1}";; --no-idle-check) NO_IDLE=1;;
     --idle-min) shift; IDLE_MIN="${1:-25}";;
     --period-days) shift; period_days="${1:-7}";;
     --no-standup) no_standup=1;;
+    --every) shift; every="${1:-30m}";;
     *) die "unknown once flag: $1";; esac; shift; done
+  # Resolve --every to minutes (Condition A1: same case pattern as cmd_install; *) mins=30 catch-all preserved)
+  local every_mins; case "$every" in *m) every_mins="${every%m}";; *h) every_mins=$(( ${every%h} * 60 ));; *) every_mins=30;; esac
 
   if owner_active; then say "massoh-cron: owner active (< ${IDLE_MIN}m) — skipping tick."; return 0; fi
 
@@ -96,6 +99,8 @@ cmd_once(){
     local i=1; for it in "${items[@]}"; do say "  $i) [$(slugify "$it")] $it  (agent: $AGENT_CMD)"; i=$((i+1)); done
     say "  (no worktree, no agent call, no edits, auto-merge=$automerge)"; return 0
   fi
+  # Capture tick start time AFTER dry-run early-return (Condition A2: not in dry-run path)
+  local tick_start; tick_start=$(date +%s)
 
   WTROOT="$(mktemp -d "${TMPDIR:-/tmp}/massoh-cron-wt.XXXXXX")"
   RESULTS="$(mktemp -d "${TMPDIR:-/tmp}/massoh-cron-res.XXXXXX")"
@@ -141,9 +146,8 @@ cmd_once(){
   say "massoh-cron: tick complete. branches: cron/*  (see AGENT_SYNC.md §[cron])."
 
   # ---- cadence block: MUST be placed after backlog serialization (Condition B) ----
-  # Compute period_ticks from --period-days (using default --every=30m → 30 mins/tick).
-  # period_ticks = period_days * 1440 / 30. Minimum 1 to avoid infinite trigger.
-  local every_mins=30  # default tick interval in minutes (mirrors cmd_install default)
+  # Compute period_ticks from --period-days and the resolved --every interval.
+  # every_mins is resolved above from --every flag (default 30m). Minimum 1 to avoid infinite trigger.
   local period_ticks=$(( period_days * 1440 / every_mins ))
   period_ticks=$(( period_ticks < 1 ? 1 : period_ticks ))
 
@@ -175,6 +179,10 @@ cmd_once(){
 
   # Persist updated counter
   printf '%s\n' "$tick_count" > "$state_file"
+
+  # Log tick duration (Condition A2: only in run mode, never in dry-run path)
+  local tick_end; tick_end=$(date +%s)
+  say "massoh-cron: tick_duration=$(( tick_end - tick_start ))s"
 }
 
 # ---- scheduler: generate an artifact; only touch the user crontab with --apply --yes-spend ----
@@ -188,7 +196,7 @@ cmd_install(){
     *) die "unknown install flag: $1";;
   esac; shift; done
   local mins; case "$every" in *m) mins="${every%m}";; *h) mins=$(( ${every%h} * 60 ));; *) mins=30;; esac
-  local line="*/$mins * * * * cd $REPO && $REPO/bin/massoh cron once --run --period-days $period_days >> $REPO/.agent_tasks/cron/cron.log 2>&1"
+  local line="*/$mins * * * * cd $REPO && $REPO/bin/massoh cron once --run --period-days $period_days --every $every >> $REPO/.agent_tasks/cron/cron.log 2>&1"
   say "massoh-cron: schedule (every ${every}):"
   say "  $line"
   if [ "$apply" = 1 ] && [ "$yes" = 1 ]; then

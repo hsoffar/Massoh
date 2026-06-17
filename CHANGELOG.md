@@ -11,6 +11,37 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.6.0] - 2026-06-17
+### Added
+- **`massoh cron once --every <DUR>`** — fixes a correctness bug: `period_ticks` was hardcoded
+  to assume 30-minute ticks regardless of the installed schedule. Now `cmd_once` accepts `--every`
+  (same case pattern as `cmd_install`) and derives `period_ticks = period_days * 1440 / every_mins`
+  from the actual interval. Default-30 fallback preserved. `cmd_install` now passes `--every $every`
+  to the generated crontab line.
+- **Tick duration logging** — `massoh cron once --run` now prints `tick_duration=<N>s` at tick end
+  (wall-clock seconds). Never appears in dry-run mode.
+- **`massoh review` v2 KPIs** — three new efficiency metrics per review run:
+  - `cycle_avg_days` — average 00→06 packet span in days (git commit timestamps; degrades to `n/a`
+    if files not in git history).
+  - `rework_pct` — % packets with a "REQUEST CHANGES" decision line in `06_review_result.md`.
+  - `throughput/wk` — packets reviewed within the `--since` window, normalized to per-week.
+  - `reverts` and `backlog_todo` also written as standalone snapshot fields for machine parsing.
+  - All three appear in stdout AND in the `## Snapshot` block in `agent-project/METRICS.md`
+    (append-only; `--no-write` remains inert).
+  - `stat` is banned; all dates via `git log -1 --format=%ct`. Division-by-zero guarded. All
+    new grep/awk calls `|| true`-guarded.
+- **`massoh recommend`** — forward heuristic suggestions from METRICS.md snapshot trend.
+  Zero LLM spend. Rules fire on parsed numeric snapshot fields:
+  - R1: cycle_avg_days rising across 2 snapshots → tighten scope.
+  - R2: rework_pct > 25% → deepen arch/safety review.
+  - R3: reverts > 0 → add regression tests.
+  - R4: backlog_todo growing while throughput/wk flat/falling (2 snapshots) → throughput bottleneck.
+  - R5: no snapshots → run `massoh review` first.
+  - Default (no rules fire): "No issues detected."
+  - Read-only by default; `--write` appends `## [recommend] <ts>` to `AGENT_SYNC.md` only
+    (sole permitted write target; `>>` append only). `< 2 snapshots` suppresses trend rules R1/R4.
+  - awk parse `|| true` — malformed METRICS.md degrades to R5, not crash.
+
 ## [0.5.1] - 2026-06-17
 ### Fixed
 - `massoh learn`: a code-citation mentioning "REQUEST CHANGES" (e.g. quoting `_PAT_REQUEST_CHANGES`)
