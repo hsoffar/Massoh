@@ -8,6 +8,11 @@ repo you opt in gets a small gated software team (product-scope, architecture/sa
 reviewer/QA, system-architect, history-maintainer) plus guardrails, task packets, and an optional
 idle-time autonomous mode. For solo owners shipping a real product with AI agents.
 
+**North-star:** point Massoh at a product goal → a governed team ships it autonomously, efficiently,
+**time/token/cost-aware**, learning from history, **reusing the harness** (never re-measuring what it
+already reports). The moat = **governance + self-measurement + autonomy** coupled.
+See `PRODUCT_STRATEGY.md` §North-star.
+
 ## 2. Current wedge (focus, NOT a permanent constraint)
 Solo owner + **Claude Code** as the host harness, on a maintained product repo.
 **Expansion principle:** today's wedge is selectable, not hard-coded
