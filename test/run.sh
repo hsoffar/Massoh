@@ -774,6 +774,129 @@ check "T14h malformed METRICS.md exits 0 (no crash)" "[ $rc14h -eq 0 ]"
 
 # T14i — all existing tests remain green (regression guard: harness exit code above enforces this)
 
+echo "== T15: massoh ledger =="
+
+# Helper: create a minimal temp repo with a .agent_tasks/ dir for ledger tests.
+mkledgerrepo() {
+  local d="$1"
+  mkdir -p "$d/.agent_tasks"
+  ( cd "$d" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+  echo x > "$d/.massoh"
+  ( cd "$d" && git add -A && git commit -qm "feat: seed ledger repo" )
+}
+
+# T15a — ledger add appends a valid 5-field TSV row
+L15a="$TMP/l15a"; mkledgerrepo "$L15a"
+( cd "$L15a" && "$MASSOH" ledger add TASK-fixture scope 1000 60 )
+check "T15a ledger.tsv created"                    "[ -f '$L15a/.agent_tasks/ledger.tsv' ]"
+check "T15a exactly 1 row"                         "[ \"\$(wc -l < '$L15a/.agent_tasks/ledger.tsv')\" -eq 1 ]"
+check "T15a row has 5 tab-separated fields"        "awk -F'\\t' 'NF==5{found=1} END{exit !found}' '$L15a/.agent_tasks/ledger.tsv'"
+check "T15a field 1 matches ISO-8601 UTC"          "awk -F'\\t' '{exit \$1 !~ /^[0-9]{4}-/}' '$L15a/.agent_tasks/ledger.tsv'"
+check "T15a field 2 is TASK-fixture"               "awk -F'\\t' '{exit \$2 != \"TASK-fixture\"}' '$L15a/.agent_tasks/ledger.tsv'"
+check "T15a field 3 is scope"                      "awk -F'\\t' '{exit \$3 != \"scope\"}' '$L15a/.agent_tasks/ledger.tsv'"
+check "T15a field 4 is 1000"                       "awk -F'\\t' '{exit \$4 != \"1000\"}' '$L15a/.agent_tasks/ledger.tsv'"
+check "T15a field 5 is 60"                         "awk -F'\\t' '{exit \$5 != \"60\"}' '$L15a/.agent_tasks/ledger.tsv'"
+
+# T15b — 3 adds = 3 rows, no overwrite (append-only)
+L15b="$TMP/l15b"; mkledgerrepo "$L15b"
+( cd "$L15b" && "$MASSOH" ledger add TASK-fixture scope 1000 60 )
+( cd "$L15b" && "$MASSOH" ledger add TASK-fixture arch  2000 90 )
+( cd "$L15b" && "$MASSOH" ledger add TASK-other   scope 500  30 )
+check "T15b 3 adds = 3 rows"                       "[ \"\$(wc -l < '$L15b/.agent_tasks/ledger.tsv')\" -eq 3 ]"
+# row 1 must still be the first row (not overwritten)
+check "T15b row 1 still present (keeps-older-data)" "awk -F'\\t' 'NR==1{exit \$4 != \"1000\"}' '$L15b/.agent_tasks/ledger.tsv'"
+
+# T15c — non-integer tokens rejected; ledger.tsv NOT created
+L15c="$TMP/l15c"; mkledgerrepo "$L15c"
+rc15c=0
+( cd "$L15c" && "$MASSOH" ledger add TASK-fixture scope notanumber 60 ) 2>/dev/null || rc15c=$?
+check "T15c non-integer tokens: non-zero exit"     "[ $rc15c -ne 0 ]"
+check "T15c non-integer tokens: no ledger created" "[ ! -f '$L15c/.agent_tasks/ledger.tsv' ]"
+
+# T15d — non-integer seconds rejected; ledger.tsv NOT created
+L15d="$TMP/l15d"; mkledgerrepo "$L15d"
+rc15d=0
+( cd "$L15d" && "$MASSOH" ledger add TASK-fixture scope 1000 notanumber ) 2>/dev/null || rc15d=$?
+check "T15d non-integer seconds: non-zero exit"    "[ $rc15d -ne 0 ]"
+check "T15d non-integer seconds: no ledger created" "[ ! -f '$L15d/.agent_tasks/ledger.tsv' ]"
+
+# T15e — wrong arg count (too few): rejected
+L15e="$TMP/l15e"; mkledgerrepo "$L15e"
+err15e=""
+rc15e=0
+err15e="$( cd "$L15e" && "$MASSOH" ledger add TASK-fixture scope 1000 2>&1 >/dev/null )" || rc15e=$?
+check "T15e too-few args: non-zero exit"           "[ $rc15e -ne 0 ]"
+check "T15e too-few args: stderr message non-empty" "[ -n '$err15e' ]"
+
+# T15f — wrong arg count (too many): rejected
+L15f="$TMP/l15f"; mkledgerrepo "$L15f"
+rc15f=0
+( cd "$L15f" && "$MASSOH" ledger add TASK-fixture scope 1000 60 extra ) 2>/dev/null || rc15f=$?
+check "T15f too-many args: non-zero exit"          "[ $rc15f -ne 0 ]"
+
+# T15g — aggregation correctness from pre-populated fixture
+L15g="$TMP/l15g"; mkledgerrepo "$L15g"
+# Write fixture rows directly (not via massoh ledger add) — raw TSV bytes
+printf '%s\t%s\t%s\t%s\t%s\n' "2026-06-17T00:00:00Z" "TASK-A" "scope" "1000" "60"  >> "$L15g/.agent_tasks/ledger.tsv"
+printf '%s\t%s\t%s\t%s\t%s\n' "2026-06-17T00:01:00Z" "TASK-A" "arch"  "2000" "90"  >> "$L15g/.agent_tasks/ledger.tsv"
+printf '%s\t%s\t%s\t%s\t%s\n' "2026-06-17T00:02:00Z" "TASK-B" "scope" "500"  "30"  >> "$L15g/.agent_tasks/ledger.tsv"
+rg15g=0
+og15g="$( cd "$L15g" && "$MASSOH" ledger 2>&1 )" || rg15g=$?
+check "T15g aggregation: exit 0"                   "[ $rg15g -eq 0 ]"
+check "T15g TASK-A tokens=3000"                    "echo '$og15g' | grep -q 'TASK-A' && echo '$og15g' | grep 'TASK-A' | grep -q 'tokens=3000'"
+check "T15g TASK-A seconds=150"                    "echo '$og15g' | grep 'TASK-A' | grep -q 'seconds=150'"
+check "T15g TASK-B tokens=500"                     "echo '$og15g' | grep -q 'TASK-B' && echo '$og15g' | grep 'TASK-B' | grep -q 'tokens=500'"
+check "T15g TASK-B seconds=30"                     "echo '$og15g' | grep 'TASK-B' | grep -q 'seconds=30'"
+check "T15g TOTAL tokens=3500"                     "echo '$og15g' | grep 'TOTAL' | grep -q 'tokens=3500'"
+check "T15g TOTAL seconds=180"                     "echo '$og15g' | grep 'TOTAL' | grep -q 'seconds=180'"
+check "T15g per-stage scope tokens=1500"           "echo '$og15g' | grep 'scope' | grep -q 'tokens=1500'"
+check "T15g per-stage scope count=2"               "echo '$og15g' | grep 'scope' | grep -q 'count=2'"
+check "T15g per-stage arch tokens=2000"            "echo '$og15g' | grep 'arch' | grep -q 'tokens=2000'"
+check "T15g per-stage arch count=1"                "echo '$og15g' | grep 'arch' | grep -q 'count=1'"
+
+# T15h — absent ledger: exit 0, human-readable message, no file created by report
+L15h="$TMP/l15h"; mkledgerrepo "$L15h"
+rh15h=0
+oh15h="$( cd "$L15h" && "$MASSOH" ledger 2>&1 )" || rh15h=$?
+check "T15h absent ledger: exit 0"                 "[ $rh15h -eq 0 ]"
+check "T15h absent ledger: human-readable message" "[ -n '$oh15h' ]"
+check "T15h absent ledger: no ledger.tsv created"  "[ ! -f '$L15h/.agent_tasks/ledger.tsv' ]"
+
+# T15i — all-malformed ledger (only rows with < 5 fields): no crash, exit 0
+L15i="$TMP/l15i"; mkledgerrepo "$L15i"
+printf 'malformed-row-only-3-fields\t2\t3\n' >> "$L15i/.agent_tasks/ledger.tsv"
+printf 'another-bad-row\n' >> "$L15i/.agent_tasks/ledger.tsv"
+ri15i=0
+( cd "$L15i" && "$MASSOH" ledger >/dev/null 2>&1 ) || ri15i=$?
+check "T15i all-malformed: exit 0 (no crash)"      "[ $ri15i -eq 0 ]"
+
+# T15j — mixed valid+malformed: valid row's task-id appears in output
+L15j="$TMP/l15j"; mkledgerrepo "$L15j"
+printf '%s\t%s\t%s\t%s\t%s\n' "2026-06-17T00:00:00Z" "TASK-VALID" "scope" "100" "10" >> "$L15j/.agent_tasks/ledger.tsv"
+printf 'bad-row-only-2-fields\tbad\n' >> "$L15j/.agent_tasks/ledger.tsv"
+rj15j=0
+oj15j="$( cd "$L15j" && "$MASSOH" ledger 2>&1 )" || rj15j=$?
+check "T15j mixed: exit 0"                         "[ $rj15j -eq 0 ]"
+check "T15j mixed: valid task-id TASK-VALID in output" "echo '$oj15j' | grep -q 'TASK-VALID'"
+
+# T15k — embedded tab in task-id and stage stripped, not preserved; TSV row has exactly 5 fields
+L15k="$TMP/l15k"; mkledgerrepo "$L15k"
+rk15k=0
+( cd "$L15k" && "$MASSOH" ledger add $'TASK\tX' $'sc\tope' 100 10 ) 2>/dev/null || rk15k=$?
+check "T15k tab in task-id/stage: exit 0 (strip, not reject)" "[ $rk15k -eq 0 ]"
+check "T15k resulting row has exactly 5 fields"    "[ -f '$L15k/.agent_tasks/ledger.tsv' ] && awk -F'\\t' 'NF==5{found=1} END{exit !found}' '$L15k/.agent_tasks/ledger.tsv'"
+check "T15k field 3 has no tab (stripped)"         "awk -F'\\t' '{exit \$3 ~ /\\t/}' '$L15k/.agent_tasks/ledger.tsv'"
+check "T15k ledger.tsv has exactly 1 row"          "[ \"\$(wc -l < '$L15k/.agent_tasks/ledger.tsv')\" -eq 1 ]"
+
+# T15l — safety-critical files unchanged after all T15 checks
+md5_massoh_t15_after="$(md5sum "$MASSOH" | awk '{print $1}')"
+md5_manifest_t15_after="$(md5sum "$REPO_ROOT/manifest.yml" | awk '{print $1}')"
+# Compare against the values captured at T11i (before T11i ran)
+check "T15l bin/massoh checksum unchanged after T15" "[ '$md5_massoh_before' = '$md5_massoh_t15_after' ]"
+check "T15l manifest.yml checksum unchanged after T15" "[ '$md5_manifest_before' = '$md5_manifest_t15_after' ]"
+
+# T15m — full suite green (regression guard: enforced by overall harness exit code)
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]
