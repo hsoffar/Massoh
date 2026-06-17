@@ -468,6 +468,19 @@ err11j="$( cd "$LR11j" && "$MASSOH" learn 2>&1 >/dev/null )" || rc11j=$?
 check "T11j non-Massoh-project non-zero exit"          "[ $rc11j -ne 0 ]"
 check "T11j non-Massoh-project error on stderr"        "[ -n '$err11j' ]"
 
+# T11k — v1.1 fixes: (1) a code-citation mentioning REQUEST CHANGES (not on a Decision line) must
+# NOT be surfaced as a blocking finding; (2) risks show CONTENT under the heading, not the heading.
+LR11k="$TMP/lr11k"; mklearnrepo "$LR11k"
+mkdir -p "$LR11k/.agent_tasks/TASK-cite"
+printf '# 06\n\n## Decision: APPROVE\n\n## Blocking\n(none)\n\n## Non-blocking\n- minor: the string REQUEST CHANGES appears here only as a quoted code citation\n' \
+  > "$LR11k/.agent_tasks/TASK-cite/06_review_result.md"
+printf '# 05\n\n## Risks\n- the offline cron path can hang without a timeout\n' \
+  > "$LR11k/.agent_tasks/TASK-cite/05_implementation_handoff.md"
+lo11k="$( cd "$LR11k" && "$MASSOH" learn 2>&1 )"
+blk11k="$(printf '%s\n' "$lo11k" | awk '/Blocking findings/{f=1;next} /Non-blocking findings/{f=0} f')"
+check "T11k code-citation NOT surfaced as blocking"    "! echo '$blk11k' | grep -q 'code citation'"
+check "T11k risks show CONTENT not heading"            "echo '$lo11k' | grep -q 'offline cron path can hang'"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]

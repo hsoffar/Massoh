@@ -367,14 +367,18 @@ cmd_learn() {
         ' "$f06" || true)
         [ -n "$nb" ] && nonblocking_lines="$nonblocking_lines"$'\n'"$(basename "$d"): $nb"
 
-        # Mine REQUEST CHANGES lines (use grep -F for literal match; guarded with || true)
-        local rc; rc=$(grep -F "$_PAT_REQUEST_CHANGES" "$f06" || true)
+        # Mine the verdict ONLY when REQUEST CHANGES is on a Decision line (v1.1: avoid code
+        # citations like `local _PAT_REQUEST_CHANGES='REQUEST CHANGES'` being mistaken for a finding)
+        local rc; rc=$(grep -iE "decision.*${_PAT_REQUEST_CHANGES}" "$f06" 2>/dev/null || true)
         [ -n "$rc" ] && blocking_lines="$blocking_lines"$'\n'"$(basename "$d"): $rc"
       fi
 
-      # Mine risks from 05
+      # Mine risks from 05 — v1.1: extract the CONTENT under a "Risk" heading, not the heading itself
       if [ -f "$f05" ]; then
-        local rk; rk=$(grep -iE '^[-*].*[Rr]isk|^##.*[Rr]isk|[Rr]isk:' "$f05" || true)
+        local rk; rk=$(awk '
+          /^#+ /{ if(tolower($0) ~ /risk/){in_s=1; next} else {in_s=0} }
+          in_s && /\S/{print}
+        ' "$f05" 2>/dev/null || true)
         [ -n "$rk" ] && risks_lines="$risks_lines"$'\n'"$(basename "$d"): $rk"
       fi
     done
