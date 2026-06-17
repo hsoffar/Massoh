@@ -11,6 +11,28 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.5.0] - 2026-06-17
+### Added
+- `massoh learn` — the **learning-from-previous loop**: heuristic read-only miner over completed
+  task packets, the decision log, and git history. Zero LLM spend (grep/awk only).
+  - **Mines**: `.agent_tasks/*/06_review_result.md` (blocking + non-blocking findings, `REQUEST
+    CHANGES` lines), `.agent_tasks/*/05_implementation_handoff.md` (risks), `AGENT_SYNC.md`
+    decision log (rows containing "irreversible" → ADR candidates), and `git log` (revert +
+    fixup counts).
+  - **Always prints** a lessons report to stdout: recurring review findings (with counts), risks
+    seen, ADR candidates, revert/fixup count.
+  - **`--write-proposals`** (default OFF): appends a `## [learn] <ts>` block to
+    `agent-project/LEARNINGS.proposed.md` (append-only, create-if-missing). NEVER writes to
+    `STANDARDS.md`, `memory/`, `docs/adr/`, or any safety-critical file.
+  - **`--since DAYS`** (default: all time): limits packet scan by file mtime.
+  - **`--no-write`**: explicit no-op alias for the default (stdout only).
+  - Graceful guards: non-Massoh-project → non-zero exit; no packets → exit 0 with "(none)" sections.
+  - Pattern strings (`## Blocking`, `## Non-blocking`, `REQUEST CHANGES`, `## Decision log`,
+    `irreversible`) extracted as named variables with `# task-packet-spec` comments for future
+    multi-language projects.
+  - Agent-OS-learning milestone: v0.5.0. The system now closes the knowledge-drift feedback loop:
+    packet history → `massoh learn` → `LEARNINGS.proposed.md` → owner promotes to STANDARDS/memory/ADR.
+
 ## [0.4.2] - 2026-06-17
 ### Added
 - `massoh cron once` now runs **cadence ceremonies** on every tick (when `--run`):
