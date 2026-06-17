@@ -343,6 +343,131 @@ check "T10h regression: run still marks DONE"      "grep -q '| DONE |' '$CR10h/A
 check "T10h regression: run still appends [cron]"  "grep -q '\[cron\]' '$CR10h/AGENT_SYNC.md'"
 check "T10h regression: run still creates branch"  "git -C '$CR10h' branch --list 'cron/*' | grep -q cron/"
 
+echo "== T11: massoh learn (heuristic miner) =="
+
+# Helper: mklearnrepo <dir>
+# Creates a minimal Massoh project with a git repo, AGENT_SYNC.md, and .agent_tasks/
+mklearnrepo() {
+  local d="$1"
+  mkdir -p "$d"
+  ( cd "$d" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+  echo x > "$d/.massoh"
+  mkdir -p "$d/agent-project" "$d/.agent_tasks"
+  printf '# AGENT_SYNC\n\n## Decision log (append-only — never delete a row)\n| Date | Decision | By |\n|---|---|---|\n| 2026-06-17 | Some routine decision | owner |\n' > "$d/AGENT_SYNC.md"
+  ( cd "$d" && git add -A && git commit -qm "feat: seed learn repo" )
+}
+
+# Helper: mklearnpacket <repo> <task-name> <blocking-text>
+mklearnpacket() {
+  local repo="$1" task="$2" blocking="$3"
+  mkdir -p "$repo/.agent_tasks/$task"
+  printf '# 06 — Review Result\n\n## Blocking\n%s\n\n## Non-blocking\n(none)\n' "$blocking" \
+    > "$repo/.agent_tasks/$task/06_review_result.md"
+  printf '# 05 — Implementation Handoff\n\n## Risks\n- Risk: watch for scope creep\n' \
+    > "$repo/.agent_tasks/$task/05_implementation_handoff.md"
+}
+
+# T11a — default mode: stdout report emitted; LEARNINGS.proposed.md NOT created
+LR11a="$TMP/lr11a"; mklearnrepo "$LR11a"
+mklearnpacket "$LR11a" "TASK-a" "grep bare exit bug found"
+mklearnpacket "$LR11a" "TASK-b" "grep bare exit bug found"
+lo11a="$( cd "$LR11a" && "$MASSOH" learn 2>&1 )"
+check "T11a stdout contains report header"             "echo '$lo11a' | grep -q 'massoh learn'"
+check "T11a Blocking findings section in stdout"       "echo '$lo11a' | grep -q 'Blocking findings'"
+check "T11a LEARNINGS.proposed.md NOT created"         "[ ! -f '$LR11a/agent-project/LEARNINGS.proposed.md' ]"
+
+# T11b — --no-write identical to default
+LR11b="$TMP/lr11b"; mklearnrepo "$LR11b"
+mklearnpacket "$LR11b" "TASK-a" "some blocking text"
+lo11b="$( cd "$LR11b" && "$MASSOH" learn --no-write 2>&1 )"
+check "T11b --no-write stdout still emitted"           "echo '$lo11b' | grep -q 'massoh learn'"
+check "T11b --no-write LEARNINGS.proposed.md absent"   "[ ! -f '$LR11b/agent-project/LEARNINGS.proposed.md' ]"
+
+# T11c — --write-proposals creates file with 4 sections; three runs = three [learn] blocks
+LR11c="$TMP/lr11c"; mklearnrepo "$LR11c"
+mklearnpacket "$LR11c" "TASK-a" "some finding"
+( cd "$LR11c" && "$MASSOH" learn --write-proposals >/dev/null 2>&1 )
+check "T11c LEARNINGS.proposed.md created"             "[ -f '$LR11c/agent-project/LEARNINGS.proposed.md' ]"
+check "T11c contains ## [learn] header"                "grep -q '## \[learn\]' '$LR11c/agent-project/LEARNINGS.proposed.md'"
+check "T11c contains Proposed STANDARDS section"       "grep -q 'Proposed STANDARDS' '$LR11c/agent-project/LEARNINGS.proposed.md'"
+check "T11c contains Possible ADR candidates"          "grep -q 'Possible ADR candidates' '$LR11c/agent-project/LEARNINGS.proposed.md'"
+check "T11c contains Repeated-fix indicators"          "grep -q 'Repeated-fix indicators' '$LR11c/agent-project/LEARNINGS.proposed.md'"
+# Three runs = three [learn] blocks (append-only, no overwrite)
+( cd "$LR11c" && "$MASSOH" learn --write-proposals >/dev/null 2>&1 )
+( cd "$LR11c" && "$MASSOH" learn --write-proposals >/dev/null 2>&1 )
+check "T11c three runs = three [learn] blocks (append-only)" \
+  "[ \"\$(grep -c '## \[learn\]' '$LR11c/agent-project/LEARNINGS.proposed.md')\" -eq 3 ]"
+
+# T11d — recurring pattern ("A&&B||C anti-pattern") surfaces in proposals
+LR11d="$TMP/lr11d"; mklearnrepo "$LR11d"
+mklearnpacket "$LR11d" "TASK-a" "A&&B||C anti-pattern found in ceremony wrappers"
+mklearnpacket "$LR11d" "TASK-b" "A&&B||C anti-pattern found again in guards"
+( cd "$LR11d" && "$MASSOH" learn --write-proposals >/dev/null 2>&1 )
+check "T11d recurring pattern in proposals"            "grep -q 'A&&B||C' '$LR11d/agent-project/LEARNINGS.proposed.md' || grep -q 'anti' '$LR11d/agent-project/LEARNINGS.proposed.md'"
+check "T11d stdout shows both tasks mentioned"         "lo11d=\"\$( cd '$LR11d' && '$MASSOH' learn 2>&1 )\" && echo \"\$lo11d\" | grep -qiE 'TASK-a|TASK-b'"
+
+# T11e — decision log ADR candidate extracted
+LR11e="$TMP/lr11e"; mklearnrepo "$LR11e"
+printf '# AGENT_SYNC\n\n## Decision log (append-only — never delete a row)\n| Date | Decision | By |\n|---|---|---|\n| 2026-06-17 | Some irreversible infrastructure choice was made | owner |\n' \
+  > "$LR11e/AGENT_SYNC.md"
+( cd "$LR11e" && "$MASSOH" learn --write-proposals >/dev/null 2>&1 )
+check "T11e ADR candidates section non-empty"          "grep -q 'irreversible' '$LR11e/agent-project/LEARNINGS.proposed.md'"
+
+# T11f — git revert count in report
+LR11f="$TMP/lr11f"; mklearnrepo "$LR11f"
+( cd "$LR11f" && echo "extra" >> .massoh && git add -A && git commit -qm "chore: extra commit" )
+( cd "$LR11f" && git revert --no-edit HEAD -q 2>/dev/null || git revert --no-edit HEAD 2>/dev/null || true )
+lo11f="$( cd "$LR11f" && "$MASSOH" learn 2>&1 )"
+check "T11f stdout contains revert count 1"            "echo '$lo11f' | grep -q 'revert'"
+check "T11f revert count is at least 1"                "echo '$lo11f' | grep 'revert commit' | grep -qvE ': 0$'"
+
+# T11g — --since DAYS limits packet scan (old packet excluded)
+LR11g="$TMP/lr11g"; mklearnrepo "$LR11g"
+mklearnpacket "$LR11g" "TASK-old" "old-finding-only-in-old-packet"
+mklearnpacket "$LR11g" "TASK-new" "new-finding-in-recent-packet"
+# Set the old packet's mtime to 10 days ago
+touch -t "$(date -d '10 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-10d +%Y%m%d%H%M 2>/dev/null || echo '202606070000')" \
+  "$LR11g/.agent_tasks/TASK-old/06_review_result.md" \
+  "$LR11g/.agent_tasks/TASK-old/05_implementation_handoff.md" 2>/dev/null || true
+lo11g="$( cd "$LR11g" && "$MASSOH" learn --since 1 2>&1 )"
+check "T11g --since 1 includes recent packet findings"  "echo '$lo11g' | grep -q 'new-finding'"
+check "T11g --since 1 excludes old packet findings"     "! echo '$lo11g' | grep -q 'old-finding-only-in-old-packet'"
+
+# T11h — graceful degrade: no .agent_tasks or no completed packets
+LR11h="$TMP/lr11h"; mklearnrepo "$LR11h"
+# Remove .agent_tasks entirely to test graceful degrade
+rm -rf "$LR11h/.agent_tasks"
+rc11h=0
+lo11h="$( cd "$LR11h" && "$MASSOH" learn 2>&1 )" || rc11h=$?
+check "T11h no packets exit 0"                         "[ $rc11h -eq 0 ]"
+check "T11h no packets stdout has report header"       "echo '$lo11h' | grep -q 'massoh learn'"
+check "T11h no packets stdout has (none) section"      "echo '$lo11h' | grep -q '(none'"
+
+# T11i — safety-critical paths unchanged after --write-proposals
+LR11i="$TMP/lr11i"; mklearnrepo "$LR11i"
+mklearnpacket "$LR11i" "TASK-a" "finding for safety check"
+# Snapshot checksums before
+md5_massoh_before="$(md5sum "$MASSOH" | awk '{print $1}')"
+md5_manifest_before="$(md5sum "$REPO_ROOT/manifest.yml" | awk '{print $1}')"
+# Create a STANDARDS.md to also check
+printf '# STANDARDS\n\n## Do / Don'"'"'t\n- Do: test everything\n' > "$LR11i/agent-project/STANDARDS.md"
+md5_standards_before="$(md5sum "$LR11i/agent-project/STANDARDS.md" | awk '{print $1}')"
+( cd "$LR11i" && "$MASSOH" learn --write-proposals >/dev/null 2>&1 )
+md5_massoh_after="$(md5sum "$MASSOH" | awk '{print $1}')"
+md5_manifest_after="$(md5sum "$REPO_ROOT/manifest.yml" | awk '{print $1}')"
+md5_standards_after="$(md5sum "$LR11i/agent-project/STANDARDS.md" | awk '{print $1}')"
+check "T11i bin/massoh checksum unchanged"             "[ '$md5_massoh_before' = '$md5_massoh_after' ]"
+check "T11i manifest.yml checksum unchanged"           "[ '$md5_manifest_before' = '$md5_manifest_after' ]"
+check "T11i STANDARDS.md checksum unchanged"           "[ '$md5_standards_before' = '$md5_standards_after' ]"
+
+# T11j — non-Massoh-project → non-zero exit + error on stderr
+LR11j="$TMP/lr11j"; mkdir -p "$LR11j"
+# no .massoh, no agent-project/
+rc11j=0
+err11j="$( cd "$LR11j" && "$MASSOH" learn 2>&1 >/dev/null )" || rc11j=$?
+check "T11j non-Massoh-project non-zero exit"          "[ $rc11j -ne 0 ]"
+check "T11j non-Massoh-project error on stderr"        "[ -n '$err11j' ]"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]
