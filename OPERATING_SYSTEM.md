@@ -57,7 +57,13 @@ Full detail: `agent-os/policies/03_AGENT_WORKFLOW.md`.
 Use `/start-task`. `evaluate …` → decision artifacts (00/01 packet files), **never code**.
 `implement …` → consumes an existing approved `04_implementation_packet.md`. Or invoke agents
 explicitly (`@product-scope`, `@architecture-safety`, `@implementer`, `@reviewer-qa`,
-`@system-architect`, `@history-maintainer`). Roles/permissions: `agent-os/policies/02_AGENT_ROLES.md`.
+`@system-architect`, `@history-maintainer`, `@meta-engineer`). Roles/permissions:
+`agent-os/policies/02_AGENT_ROLES.md`.
+
+The **massoh-meta-engineer** (7th role) reads `massoh meta` output + the ledger + completed
+packets to surface bottlenecks, rework patterns, and repeated review findings. It proposes engine
+upgrades to `agent-project/META.proposed.md` (labeled `[meta]`), then routes them through the
+normal gate. It never auto-merges engine changes and never edits safety-critical files directly.
 
 ## 5. Task packets (`.agent_tasks/`)
 

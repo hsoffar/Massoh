@@ -4,18 +4,18 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-17 ( TASK-2026-06-17-massoh-ledger — APPROVED by reviewer-qa: all 8 conditions L1–L7,L9 independently verified; 177/177 green; scope clean; safety-critical files untouched; ready for owner commit + PR )
+Last updated: 2026-06-17 ( TASK-2026-06-17-massoh-meta — APPROVED by massoh-reviewer-qa; M1/M2/M3 independently verified with line numbers; 204/204 green; scope clean; doctor 7 agents ok; ready for owner commit + PR )
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**TASK-2026-06-17-massoh-ledger** — APPROVED by reviewer-qa. `cmd_ledger` added to `bin/massoh`; 177/177 green (40 new T15 checks, independently verified); VERSION 0.7.0; all 8 conditions L1–L7,L9 independently verified with line numbers; scope clean; safety-critical files untouched. Ready for owner commit + PR.
+**TASK-2026-06-17-massoh-meta** — **IMPLEMENTED**. Slice 1: `cmd_meta` in `bin/massoh` (ledger cost outliers, rework rate, backlog drift, repeated review findings; `--write-proposals` flag; `OUTLIER_FACTOR=2`, `REPEAT_THRESHOLD=3`; M1–M10 satisfied). Slice 2: `massoh-meta-engineer.md` (7th PROPOSE-ONLY role agent, auto-installs via glob) + additive doc updates (`02_AGENT_ROLES.md` 7 rows, `OPERATING_SYSTEM.md` §4, `README.md`; M11–M14 satisfied). VERSION 0.8.0. Test suite: 204/204 green (all T-meta-A–M pass). Routing to massoh-reviewer-qa.
+
+**Previous task:** TASK-2026-06-17-massoh-ledger — APPROVED by reviewer-qa. `cmd_ledger` added to `bin/massoh`; 177/177 green (40 new T15 checks, independently verified); VERSION 0.7.0; all 8 conditions L1–L7,L9 independently verified with line numbers; scope clean; safety-critical files untouched. Ready for owner commit + PR.
 
 **Previous task:** TASK-2026-06-17-efficiency-v2 — FINAL APPROVE issued by reviewer-qa. T14g fix confirmed real (find-based dir snapshot, single-quote anti-pattern gone). All A1-A5/B1-B5/C1-C6 conditions independently verified. 137/137 green. Ready for owner commit + PR.
-
-**Previous task:** TASK-2026-06-17-massoh-learn — APPROVED by reviewer-qa. All 4 conditions independently verified; 105/105 green. Ready for owner to merge (commit + open PR).
 
 ## Open questions (owner decision needed)
 | Question | Raised | Context |
@@ -55,6 +55,10 @@ shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (
 | 2026-06-17 | TASK-2026-06-17-massoh-ledger: arch/safety **APPROVED** — 8 mandatory conditions: L1 (tab/newline sanitize task-id+stage), L2 (integer regex validation tokens+seconds), L3 (arg-count guard first), L4 (single-printf->> write, named LEDGER var + SAFETY comment), L5 (awk div-zero guard), L6 (awk skip malformed rows), L7 (|| true on all reads + absent-file degrade exit 0), L9 (free-form stage comment); ledger.tsv tracked in git (audit history, not gitignored); T15a-T15m specified | architecture-safety |
 | 2026-06-17 | TASK-2026-06-17-massoh-ledger: **IMPLEMENTED** — cmd_ledger inline in bin/massoh (lines 698–790); 40 new T15 checks; 177/177 green; VERSION 0.7.0; all 8 conditions L1–L7,L9 met (line numbers in 05_handoff); routing to reviewer-qa |
 | 2026-06-17 | TASK-2026-06-17-massoh-ledger: **APPROVE** — all 8 conditions L1–L7,L9 independently verified (line refs in 06_review_result); 177/177 green (independently run); scope clean; no deferred features; safety-critical files untouched; T15c/T15d assert zero file side-effects on rejection | reviewer-qa | implementer |
+| 2026-06-17 | TASK-2026-06-17-massoh-meta: product-scope **BUILD** — Slice 1 (massoh meta CLI verb: ledger cost outliers, rework rate, backlog drift, repeated review findings; --write-proposals appends to META.proposed.md only; zero LLM); Slice 2 (massoh-meta-engineer.md role agent + 02_AGENT_ROLES.md/OPERATING_SYSTEM.md "6→7" doc updates); M1-M7 safety conditions; sign-off on record in 00_request.md; route to massoh-architecture-safety | product-scope |
+| 2026-06-17 | TASK-2026-06-17-massoh-meta: arch/safety **APPROVED both slices** — 14 conditions: M1 (write isolation >> META.proposed.md named var + SAFETY comment), M2 (|| true on ALL grep/awk/git), M3 (degrade exit 0), M4 (write_meta=0 default), M5 (no internal cmd_learn/ledger calls), M6 (no new safety-critical designation), M7 (OUTLIER_FACTOR=2 + REPEAT_THRESHOLD=3 named vars), M8 ([meta] label prefix), M9 (verb registration + VERSION 0.8.0), M10 (no METRICS.md read for rework), M11 (agent prompt PROPOSE-ONLY explicit), M12 (manifest.yml unchanged — glob covers), M13 (doctor auto-adapts to 7 agents — dynamic enum confirmed), M14 (doc edits additive only); [meta]/[intake] namespace separation confirmed; T-meta-A–J (Slice 1) + T-meta-K–M (Slice 2) specified; owner sign-off covers both slices | architecture-safety |
+| 2026-06-17 | TASK-2026-06-17-massoh-meta: **IMPLEMENTED** — cmd_meta in bin/massoh (lines 795–1019); massoh-meta-engineer.md (7th agent); 02_AGENT_ROLES.md 7 rows; OPERATING_SYSTEM.md §4; README roles; VERSION 0.8.0; CHANGELOG [0.8.0]; 204/204 green (29 new T-meta-A–M); all M1–M14 satisfied (line numbers in 05_handoff); routing to massoh-reviewer-qa | implementer |
+| 2026-06-17 | TASK-2026-06-17-massoh-meta: **APPROVE** — M1 (write isolation, line 1017 only write, SAFETY comment lines 815–816), M2 (all 7 grep/awk/git guarded — full enumeration in 06_review_result), M3 (4 degrade paths + 3 awk div-zero guards) independently verified; T-meta-G real find-based snapshot; T-meta-D boundary=3 packets; T-meta-K doctor 7 ok agents; 204/204 green; scope clean; NB-1 AGENT_BACKLOG.md additive housekeeping (non-blocking); manifest/NON_NEGOTIABLES/install logic untouched | reviewer-qa |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -68,18 +72,28 @@ None.
 | TASK-2026-06-17-massoh-learn | 06_review_result (APPROVE) | APPROVED — ready for owner commit + PR |
 | TASK-2026-06-17-efficiency-v2 | 06_review_result (FINAL APPROVE) | APPROVED — ready for owner commit + PR |
 | TASK-2026-06-17-massoh-ledger | 06_review_result (APPROVE) | APPROVED — ready for owner commit + PR |
+| TASK-2026-06-17-massoh-meta | 06_review_result (APPROVE) | APPROVED — ready for owner commit + PR |
 
 ## Last handoff
 ```
 Agent: massoh-reviewer-qa
-Mode: review
-Task: TASK-2026-06-17-massoh-ledger — time/token/cost ledger
+Mode: evaluate
+Task: TASK-2026-06-17-massoh-meta — massoh meta self-improvement engineer
 Status: APPROVED. 06_review_result.md written.
-Branch: feat/massoh-ledger
-Decision: APPROVE — all 8 conditions L1–L7,L9 independently verified with line numbers;
-  177/177 green (independently run); scope clean (5 files only: bin/massoh, test/run.sh,
-  VERSION, CHANGELOG.md, AGENT_SYNC.md); no deferred features introduced; safety-critical
-  files untouched; T15c/T15d assert zero file side-effects on bad-input rejection (load-
-  bearing safety invariant confirmed).
-Next recommended agent: owner (commit + PR)
+Branch: feat/massoh-meta
+Decision: APPROVE — all M1–M14 independently verified; 204/204 green; scope clean.
+  M1 (write isolation): single >> at bin/massoh line 1017 to $META_PROPOSALS;
+    SAFETY comment on lines 815–816; no other write in cmd_meta.
+  M2 (|| true): all 7 grep/awk/git calls enumerated and guarded (see 06_review_result §1).
+  M3 (degrade): 4 degrade paths verified; 3 awk div-zero guards verified.
+  M7: named constants OUTLIER_FACTOR=2 (line 797), REPEAT_THRESHOLD=3 (line 798).
+  T-meta-G: real find-based directory snapshot (NOT vacuous single-quote pattern).
+  T-meta-D: exactly 3 qualifying packets (boundary condition confirmed).
+  T-meta-K: massoh doctor exits 0 with 7 ok agent lines (confirmed).
+  Docs (02_AGENT_ROLES.md, OPERATING_SYSTEM.md, README.md): 7 roles consistently; no stale refs.
+  NB-1 (non-blocking): AGENT_BACKLOG.md changed (additive backlog housekeeping) but not in
+    04's files-touched list — benign, no action required.
+  NB-2 (reminder): stage claude/agents/massoh-meta-engineer.md before committing (currently untracked).
+  manifest.yml / NON_NEGOTIABLES.md / install/uninstall/block logic: all unchanged.
+Next recommended action: owner commit + PR (stage massoh-meta-engineer.md explicitly)
 ```
