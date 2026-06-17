@@ -22,8 +22,10 @@ re-syncs `AGENT_SYNC.md`. Full rules: `~/.claude/agent-os/docs/AUTONOMOUS_CRON.m
 ## Queue (top = next)
 | # | Pri | Item | Why | Status |
 |---|-----|------|-----|--------|
-| 1 | P1 | Wire cadence into `cron` (tick → `standup`; period → `review` + `plan`) | Finish v0.4 — scheduled, unattended ceremonies | TODO |
-| 2 | P1 | Enforce license-to-code gate (pre-commit/pre-push + CI) | The one hard gate is honor-system today; make it mechanical | TODO |
+| 1 | P1 | **`massoh-meta` (self-improvement engineer)** — a role that watches Massoh's OWN operation (ledger cost, rework rate, per-stage spend, excess inter-agent comms, over-process), finds bottlenecks/inefficiency, learns from repeated mistakes, and files engine upgrades → gate → new version → `massoh update`. Incl. promoting recurring review-findings into ENFORCED checks (lint) so the gate stops re-catching them. | Owner flagship: the system improves its OWN process, measured, shipped as versioned upgrades. See memory [[massoh-meta-improvement]]. | TODO |
+| 2 | P1 | Wire the ledger into `review` + `recommend` (cost-aware) — IN FLIGHT (TASK-ledger-aware) | Make self-measurement actionable | DOING |
+| 3 | P1 | **Reconcile AGENT_BACKLOG** — many shipped items (cadence-cron #8, review, standup/plan, recommend, ledger) still listed as TODO; move to Done | Backlog drift = the kind of bottleneck `massoh-meta` should auto-flag | TODO |
+| 4 | P1 | Enforce license-to-code gate (pre-commit/pre-push + CI) | The one hard gate is honor-system today; make it mechanical | TODO |
 | 3 | P2 | Emit `AGENTS.md` from the 6 roles | Multi-harness portability (Cursor/Codex/Antigravity) | TODO |
 | 4 | P3 | Profiles + single `config.yml` | Project archetypes; consolidate config | TODO |
 | 5 | P3 | Upgrade `test/run.sh` → `bats`; commit-conv ratio in discover | Nicer test UX; fewer discover false-negatives | TODO |
