@@ -1,5 +1,25 @@
 # PRODUCT_STRATEGY — Massoh
 
+## North-star / global goal (decided 2026-06-17)
+**Point Massoh at a product goal → a governed team of agents ships it** — autonomously, efficiently,
+**aware of time, task-duration, and tokens/cost**, **learning from its own history**, and **without
+reinventing the wheel** (reuse the harness + existing tools; build only the differentiator).
+
+**Differentiator (the moat):** the only system that couples **governance + self-measurement +
+autonomy**. Others ship a team (subagent collections) *or* a runtime (OpenClaw) — Massoh ships a
+*governed, self-measuring, autonomous* team. Precision = the gate; efficiency = the
+review→recommend→learn loop; autonomy = cron.
+
+**Reuse, don't rebuild:** the Claude Code harness already reports **tokens + duration per agent run**
+— Massoh *captures + persists + analyzes* it, never re-measures. Reuse subagents / Tasks / Hooks /
+cron. Do **not** rebuild OpenClaw (a runtime/daemon) — Massoh is the governance method that runs
+inside one.
+
+**Roadmap to the goal:** measure (`review`-v2) · diagnose (`recommend`) · learn (`learn`) — done →
+**time/token/cost ledger** (understand cost per task type) → **`decide`/`promote`** (ledger + lessons
+become durable memory + ADRs) → **goal-decomposed, budget-aware autonomy** (cron drains a backlog
+derived from a stated product goal).
+
 ## Positioning — "post-agile for agents" (decided 2026-06-16)
 Keep agile's **empirical core** (iterate, small increments, test against reality, inspect-and-adapt,
 retrospective learning) — those fight *uncertainty in software*, which agents face too. **Drop the
