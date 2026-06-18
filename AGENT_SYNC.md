@@ -4,18 +4,19 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-17 ( TASK-2026-06-17-massoh-meta — APPROVED by massoh-reviewer-qa; M1/M2/M3 independently verified with line numbers; 204/204 green; scope clean; doctor 7 agents ok; ready for owner commit + PR )
+Last updated: 2026-06-19 ( dashboard reconciliation — confirmed cadence/learn/efficiency-v2/ledger/meta all MERGED to main; HEAD `be97ed0`, VERSION 0.8.0; no in-flight task )
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**TASK-2026-06-17-massoh-meta** — **IMPLEMENTED**. Slice 1: `cmd_meta` in `bin/massoh` (ledger cost outliers, rework rate, backlog drift, repeated review findings; `--write-proposals` flag; `OUTLIER_FACTOR=2`, `REPEAT_THRESHOLD=3`; M1–M10 satisfied). Slice 2: `massoh-meta-engineer.md` (7th PROPOSE-ONLY role agent, auto-installs via glob) + additive doc updates (`02_AGENT_ROLES.md` 7 rows, `OPERATING_SYSTEM.md` §4, `README.md`; M11–M14 satisfied). VERSION 0.8.0. Test suite: 204/204 green (all T-meta-A–M pass). Routing to massoh-reviewer-qa.
+**None in flight.** All approved packets through TASK-2026-06-17-massoh-meta are merged to `main`
+(`be97ed0`, VERSION 0.8.0). Next work pulls from `agent-project/NOW_NEXT_LATER.md` §NEXT via
+`/start-task`.
 
-**Previous task:** TASK-2026-06-17-massoh-ledger — APPROVED by reviewer-qa. `cmd_ledger` added to `bin/massoh`; 177/177 green (40 new T15 checks, independently verified); VERSION 0.7.0; all 8 conditions L1–L7,L9 independently verified with line numbers; scope clean; safety-critical files untouched. Ready for owner commit + PR.
-
-**Previous task:** TASK-2026-06-17-efficiency-v2 — FINAL APPROVE issued by reviewer-qa. T14g fix confirmed real (find-based dir snapshot, single-quote anti-pattern gone). All A1-A5/B1-B5/C1-C6 conditions independently verified. 137/137 green. Ready for owner commit + PR.
+**Last shipped:** TASK-2026-06-17-massoh-meta — `massoh meta` self-improvement engineer + 7th
+PROPOSE-ONLY role. Merged PR #15 → `be97ed0`, VERSION 0.8.0, 204/204 green.
 
 ## Open questions (owner decision needed)
 | Question | Raised | Context |
@@ -59,6 +60,7 @@ shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (
 | 2026-06-17 | TASK-2026-06-17-massoh-meta: arch/safety **APPROVED both slices** — 14 conditions: M1 (write isolation >> META.proposed.md named var + SAFETY comment), M2 (|| true on ALL grep/awk/git), M3 (degrade exit 0), M4 (write_meta=0 default), M5 (no internal cmd_learn/ledger calls), M6 (no new safety-critical designation), M7 (OUTLIER_FACTOR=2 + REPEAT_THRESHOLD=3 named vars), M8 ([meta] label prefix), M9 (verb registration + VERSION 0.8.0), M10 (no METRICS.md read for rework), M11 (agent prompt PROPOSE-ONLY explicit), M12 (manifest.yml unchanged — glob covers), M13 (doctor auto-adapts to 7 agents — dynamic enum confirmed), M14 (doc edits additive only); [meta]/[intake] namespace separation confirmed; T-meta-A–J (Slice 1) + T-meta-K–M (Slice 2) specified; owner sign-off covers both slices | architecture-safety |
 | 2026-06-17 | TASK-2026-06-17-massoh-meta: **IMPLEMENTED** — cmd_meta in bin/massoh (lines 795–1019); massoh-meta-engineer.md (7th agent); 02_AGENT_ROLES.md 7 rows; OPERATING_SYSTEM.md §4; README roles; VERSION 0.8.0; CHANGELOG [0.8.0]; 204/204 green (29 new T-meta-A–M); all M1–M14 satisfied (line numbers in 05_handoff); routing to massoh-reviewer-qa | implementer |
 | 2026-06-17 | TASK-2026-06-17-massoh-meta: **APPROVE** — M1 (write isolation, line 1017 only write, SAFETY comment lines 815–816), M2 (all 7 grep/awk/git guarded — full enumeration in 06_review_result), M3 (4 degrade paths + 3 awk div-zero guards) independently verified; T-meta-G real find-based snapshot; T-meta-D boundary=3 packets; T-meta-K doctor 7 ok agents; 204/204 green; scope clean; NB-1 AGENT_BACKLOG.md additive housekeeping (non-blocking); manifest/NON_NEGOTIABLES/install logic untouched | reviewer-qa |
+| 2026-06-19 | **Merged backlog of approved packets to main** (recorded retroactively during dashboard reconciliation): cadence-cron→PR #8, massoh-learn→PR #9 (+fix #10), efficiency-v2→PR #12, massoh-ledger→PR #14, massoh-meta→PR #15; docs PRs #11 (README v0.5.1) #13 (north-star). HEAD `be97ed0`, VERSION 0.8.0 | owner |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -68,32 +70,26 @@ None.
 |---|---|---|
 | TASK-2026-06-16-massoh-cli-verbs | merged | DONE — PR #1 → main `778e06a` |
 | TASK-2026-06-16-massoh-version-notify | merged | DONE — PR #2 → main `814df69`, deployed |
-| TASK-2026-06-17-cadence-cron | 06_review_result (rev2 APPROVE) | APPROVED — ready for owner commit + PR |
-| TASK-2026-06-17-massoh-learn | 06_review_result (APPROVE) | APPROVED — ready for owner commit + PR |
-| TASK-2026-06-17-efficiency-v2 | 06_review_result (FINAL APPROVE) | APPROVED — ready for owner commit + PR |
-| TASK-2026-06-17-massoh-ledger | 06_review_result (APPROVE) | APPROVED — ready for owner commit + PR |
-| TASK-2026-06-17-massoh-meta | 06_review_result (APPROVE) | APPROVED — ready for owner commit + PR |
+| TASK-2026-06-17-cadence-cron | merged | DONE — PR #8 |
+| TASK-2026-06-17-massoh-learn | merged | DONE — PR #9 (+fix #10) |
+| TASK-2026-06-17-efficiency-v2 | merged | DONE — PR #12 |
+| TASK-2026-06-17-massoh-ledger | merged | DONE — PR #14 |
+| TASK-2026-06-17-massoh-meta | merged | DONE — PR #15 → `be97ed0` |
 
 ## Last handoff
 ```
-Agent: massoh-reviewer-qa
-Mode: evaluate
-Task: TASK-2026-06-17-massoh-meta — massoh meta self-improvement engineer
-Status: APPROVED. 06_review_result.md written.
-Branch: feat/massoh-meta
-Decision: APPROVE — all M1–M14 independently verified; 204/204 green; scope clean.
-  M1 (write isolation): single >> at bin/massoh line 1017 to $META_PROPOSALS;
-    SAFETY comment on lines 815–816; no other write in cmd_meta.
-  M2 (|| true): all 7 grep/awk/git calls enumerated and guarded (see 06_review_result §1).
-  M3 (degrade): 4 degrade paths verified; 3 awk div-zero guards verified.
-  M7: named constants OUTLIER_FACTOR=2 (line 797), REPEAT_THRESHOLD=3 (line 798).
-  T-meta-G: real find-based directory snapshot (NOT vacuous single-quote pattern).
-  T-meta-D: exactly 3 qualifying packets (boundary condition confirmed).
-  T-meta-K: massoh doctor exits 0 with 7 ok agent lines (confirmed).
-  Docs (02_AGENT_ROLES.md, OPERATING_SYSTEM.md, README.md): 7 roles consistently; no stale refs.
-  NB-1 (non-blocking): AGENT_BACKLOG.md changed (additive backlog housekeeping) but not in
-    04's files-touched list — benign, no action required.
-  NB-2 (reminder): stage claude/agents/massoh-meta-engineer.md before committing (currently untracked).
-  manifest.yml / NON_NEGOTIABLES.md / install/uninstall/block logic: all unchanged.
-Next recommended action: owner commit + PR (stage massoh-meta-engineer.md explicitly)
+Agent: (orchestrator) — dashboard reconciliation
+Mode: SYNC_ONLY
+Task: reconcile AGENT_SYNC.md + NOW_NEXT_LATER.md against merged git history
+Status: DONE. All approved packets confirmed merged to main (PRs #8/#9/#10/#11/#12/#13/#14/#15).
+Branch: main
+Decision: dashboards were stale (showed 5 tasks as "ready for PR" that already merged); corrected.
+Files changed: AGENT_SYNC.md, agent-project/NOW_NEXT_LATER.md (markdown only).
+Tests run: none (no code change).
+Risks: none.
+Blocked by: nothing.
+Next recommended agent: massoh-product-scope (pick next NEXT item) OR massoh-implementer (if a
+  licensed packet exists). No active packet — start via /start-task.
+Next action: owner picks next backlog item from NOW_NEXT_LATER.md §NEXT
+  (license-to-code gate enforcement, or v0.9 candidate).
 ```
