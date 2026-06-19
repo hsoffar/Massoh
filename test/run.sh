@@ -90,10 +90,26 @@ echo "== T6: version + doctor update-check =="
 vout="$("$MASSOH" version 2>&1)"
 check "version prints semver"                "echo '$vout' | grep -qE '^massoh [0-9]+\.[0-9]+'"
 # build a clone that is BEHIND origin/main, with the new binary, then doctor must flag 'update available'
-B6="$TMP/bare6.git"; git clone -q --bare "$REPO_ROOT" "$B6"
+# Option A: synthetic local bare repo — zero outbound network (FT1, FT5).
+# Seed from a plain git init + filesystem copy of REPO_ROOT; never clone REPO_ROOT or touch its remotes.
+B6="$TMP/bare6.git"; git -c init.defaultBranch=main init -q --bare "$B6"
+S6="$TMP/seed6"; mkdir -p "$S6"
+# copy tracked working tree content (exclude .git/) then commit and push to B6 — pure local filesystem
+( cd "$REPO_ROOT" && git ls-files ) | while IFS= read -r f; do
+  mkdir -p "$S6/$(dirname "$f")" && cp "$REPO_ROOT/$f" "$S6/$f"
+done
+( cd "$S6" && git -c init.defaultBranch=main init -q \
+  && git config user.email t@t && git config user.name t \
+  && git add -A \
+  && git commit -q -m "seed" \
+  && git remote add origin "$B6" \
+  && git push -q origin main )
+rm -rf "$S6" 2>/dev/null || true
+# clone bare into W6 (this is the "behind" working tree — W6 is one commit behind after A6 advances)
 W6="$TMP/w6"; git clone -q "$B6" "$W6"; ( cd "$W6" && git config user.email t@t && git config user.name t )
 cp "$MASSOH" "$W6/bin/massoh"; cp "$REPO_ROOT/VERSION" "$W6/VERSION"   # overlay uncommitted working-tree files
 cp -rp "$REPO_ROOT/lib" "$W6/"   # v0.11.0: bin/massoh now sources lib/verbs/; overlay alongside the binary
+# advance origin/main via a second clone so W6 is behind (all local, no network)
 A6="$TMP/a6"; git clone -q "$B6" "$A6"; ( cd "$A6" && git config user.email t@t && git config user.name t )
 ( cd "$A6" && git checkout -q main && echo z >> README.md && git commit -qam "advance main" && git push -q origin main )
 CC6="$(newcc)"; MASSOH_HOME="$W6" CLAUDE_CONFIG_DIR="$CC6" "$W6/bin/massoh" install >/dev/null 2>&1
