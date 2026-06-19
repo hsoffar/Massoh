@@ -4,7 +4,7 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-19 (24h-queue fan-out — **9 SHIPPED v0.9→v0.16** (license-gate, board, modularize, CI, intake, fleet, profiles #22, renderer #23, agents-md #24) + #5 DEFERRED. Remaining: **#7 RMT** (proposal drafted by meta-engineer on feat/rmt — awaiting arch-safety + owner sign-off on manifest), **#11 schema** (BLOCKED — needs owner sign-off on manifest.yml), **#12 bats** (last). Follow-up: verb load-order NB-1.)
+Last updated: 2026-06-19 (24h-queue — 9 SHIPPED v0.9→v0.16 + #5 DEFERRED. **Owner SIGNED OFF on all 3 remaining: #7 RMT adoption, #11 schema-rename, #12 bats** (incl. manifest + bin/massoh for #7/#11). Driving serial: #7 RMT (→v0.17) → #11 schema (→v0.18) → #12 bats (→v0.19, last). #7 implementer applying ADOPTION DIFF on feat/rmt.)
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
@@ -93,6 +93,9 @@ on green; PRs reviewable post-hoc. See `AGENT_BACKLOG.md` §24h-plan.
 | 2026-06-19 | TASK-2026-06-19-board-renderer (#8): **APPROVE** — BR1–BR8 all independently verified (line refs in 06_review_result); 389/389 green (self-witnessed twice); XSS proof: no raw `<script>` in board.html, `&lt;script&gt;`/`&amp;`/`&quot;` confirmed present; clobber-guard proof: exit 1 + md5sum identical on hand-authored file; `_board_push_plane` byte-identical (diff clean); scope clean (4 files: lib/verbs/board.sh additive, test/run.sh +28 T-BR, VERSION, CHANGELOG); AGENT_SYNC.md/AGENT_BACKLOG.md/manifest.yml/templates/bin/massoh untouched; T-BR-11 deviation non-blocking (packet "exactly 2" premise wrong — 3 pre-existing call sites on main; new --local adds 4th; no second scanner confirmed); NB-1 T-BR-11 deviation (non-blocking, correctly pivots to spirit test); NB-2 `$ts` unescaped (non-issue, ASCII-safe date format). | reviewer-qa |
 | 2026-06-19 | TASK-2026-06-19-agentsmd (#10): **APPROVE** — AM1–AM10 all independently verified (line refs in 06_review_result); 418/418 green (self-witnessed); clobber-guard reproduced live: exit 1 + md5 identical on hand-authored file + stderr mentions sentinel; idempotent proof: md5_run1=92a67a079edd88615f88c9f1a9ebafbf = md5_run2; degrade confirmed via T-AM-e (empty claude/agents/ → exit 0, AGENTS.md absent); scope clean (lib/verbs/agents_md.sh new, bin/massoh +2 lines, test/run.sh +29 T-AM, VERSION, CHANGELOG, AGENTS.md artifact); manifest.yml/AGENT_SYNC.md/AGENT_BACKLOG.md/templates/NON_NEGOTIABLES untouched; T-MB-f update legitimate additive; NB-1 AM1 grep false-positives on multiline pipeline continuation lines (product code correct). | reviewer-qa |
 | 2026-06-19 | 24h-queue: **MERGED** #9 profiles PR #22 (v0.14.0), #8 board-renderer PR #23 (v0.15.0), #10 agents-md PR #24 (v0.16.0) — all auto-merged on green per policy. 9 features shipped this session (v0.9→v0.16). | owner |
+
+| 2026-06-19 | #7 RMT: arch/safety **APPROVED pending owner sign-off** — RG1–RG10; GAP-1 (manifest scripts/ entry needs bin/massoh cmd_install+cmd_doctor loop lockstep, else req-check declared-not-installed), GAP-2 (C07 req.get fix); target 434; new additive files safe, ADOPTION DIFF owner-gated. | architecture-safety |
+| 2026-06-19 | **Owner SIGNED OFF on all 3 remaining queue items** — #7 RMT (manifest.yml + bin/massoh install/doctor lockstep + policy 03/05/08/11 cross-links + VERSION 0.17.0), #11 schema-rename (manifest.yml version:→schema_version:), #12 bats (test/run.sh port). Drive serial #7→#11→#12; auto-merge-on-green; each still arch-safety+reviewer-qa gated. | owner |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
