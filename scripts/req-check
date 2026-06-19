@@ -1,0 +1,419 @@
+#!/usr/bin/env python3
+"""
+req-check — Massoh RMT reference validator
+==========================================
+Validates a project's requirements registry against its config.
+Config-driven; zero project-specific strings are hard-coded here.
+
+Dependencies: Python 3.8+ stdlib + PyYAML (pip install pyyaml)
+
+Usage:
+  req-check
+  req-check --config agent-project/requirements.config.yml \\
+            --registry requirements/registry.yml \\
+            --baseline HEAD~1
+
+Exit codes:
+  0 — all checks pass (warnings may be printed)
+  1 — one or more ERRORs found
+  2 — invocation / file-load error
+
+Checks:
+  C01 ERROR  Duplicate IDs
+  C02 ERROR  status not in vocabulary
+  C03 ERROR  priority not in vocabulary
+  C04 ERROR  area not in area_vocab
+  C05 ERROR  status:implemented but code/tests/satisfied_by empty
+  C06 ERROR  status:implemented and a code/tests path resolves to 0 files
+  C07 ERROR  flag value not found in any flag_source
+  C08 ERROR  append-only: an ID from baseline is missing in current registry
+  C09 ERROR  status:removed but removed_reason is null/empty
+  C10 ERROR  safety-locked req removed without owner_approved:true
+  C11 WARN   flag key in a flag_source has no matching registry entry
+  C12 WARN   source field is empty for a non-proposed requirement
+"""
+
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import glob
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+try:
+    import yaml
+except ImportError:
+    print("ERROR: PyYAML is required. Install with: pip install pyyaml", file=sys.stderr)
+    sys.exit(2)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+STATUS_VOCAB = {"proposed", "implemented", "deferred", "frozen", "removed"}
+PRIORITY_VOCAB = {"P0", "P1", "P2", "P3"}
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def load_yaml(path: str) -> Any:
+    with open(path, "r", encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
+def resolve_paths(patterns: list[str], roots: list[str], repo_root: str) -> list[str]:
+    """Return all real files matching patterns under any of the roots."""
+    found: list[str] = []
+    for pattern in patterns:
+        for root in roots:
+            search_base = os.path.join(repo_root, root)
+            # Try as a direct relative path first (relative to repo root)
+            direct = os.path.join(repo_root, pattern)
+            if os.path.isfile(direct):
+                found.append(direct)
+                continue
+            # Try as glob under this root
+            candidate = os.path.join(search_base, pattern)
+            matches = glob.glob(candidate, recursive=True)
+            found.extend(m for m in matches if os.path.isfile(m))
+    return list(set(found))
+
+
+def git_show(ref: str, path: str, repo_root: str) -> str | None:
+    """Return file content at a git ref, or None if not available."""
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{ref}:{path}"],
+            capture_output=True,
+            text=True,
+            cwd=repo_root,
+        )
+        if result.returncode == 0:
+            return result.stdout
+        return None
+    except FileNotFoundError:
+        return None
+
+
+def extract_flag_keys(source: dict[str, Any], repo_root: str) -> set[str]:
+    """Parse a flag_source entry and return the set of flag keys it defines."""
+    path = os.path.join(repo_root, source["path"])
+    parser = source.get("parser", "yaml-keys")
+    keys: set[str] = set()
+
+    if not os.path.isfile(path):
+        print(f"  WARN  flag_source not found, skipping: {source['path']}")
+        return keys
+
+    with open(path, "r", encoding="utf-8") as fh:
+        content = fh.read()
+
+    if parser == "yaml-keys":
+        try:
+            data = yaml.safe_load(content)
+            if isinstance(data, dict):
+                keys = set(data.keys())
+        except yaml.YAMLError:
+            pass
+
+    elif parser == "json-keys":
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict):
+                keys = set(data.keys())
+        except json.JSONDecodeError:
+            pass
+
+    elif parser == "python-allowlist":
+        # Heuristic: scan for ALLOWLIST = {...} or DEFAULTS = {...} dict literals
+        # and extract string keys. Line-oriented; not a full Python parser.
+        import re
+        in_block = False
+        brace_depth = 0
+        for line in content.splitlines():
+            stripped = line.strip()
+            # Start of a known dict
+            if not in_block and re.match(r"^(ALLOWLIST|DEFAULTS)\s*=\s*\{", stripped):
+                in_block = True
+                brace_depth = stripped.count("{") - stripped.count("}")
+                # Extract keys on the same line
+                for m in re.finditer(r"""["']([^"']+)["']\s*:""", stripped):
+                    keys.add(m.group(1))
+                continue
+            if in_block:
+                brace_depth += stripped.count("{") - stripped.count("}")
+                for m in re.finditer(r"""["']([^"']+)["']\s*:""", stripped):
+                    keys.add(m.group(1))
+                if brace_depth <= 0:
+                    in_block = False
+
+    elif parser == "kotlin-object-keys":
+        # Heuristic: reads "val FLAGNAME" or "const val FLAGNAME" field names
+        # from a Kotlin object or companion object block. Line-oriented.
+        import re
+        for line in content.splitlines():
+            m = re.search(r"(?:const\s+)?val\s+([A-Z_][A-Z0-9_]*)", line)
+            if m:
+                keys.add(m.group(1))
+
+    else:
+        print(f"  WARN  unknown flag_source parser '{parser}', skipping: {source['path']}")
+
+    return keys
+
+
+# ---------------------------------------------------------------------------
+# Main validator
+# ---------------------------------------------------------------------------
+
+
+def run_checks(
+    config_path: str,
+    registry_path: str,
+    baseline_ref: str,
+    repo_root: str,
+) -> tuple[list[str], list[str]]:
+    """Return (errors, warnings) as lists of human-readable strings."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    # --- Load config -------------------------------------------------------
+    if not os.path.isfile(config_path):
+        # No config = RMT dormant; not an error
+        print(f"NOTICE: no RMT config found at {config_path!r} — RMT is dormant for this project.")
+        return [], []
+
+    try:
+        config = load_yaml(config_path) or {}
+    except Exception as exc:
+        errors.append(f"Cannot load config {config_path!r}: {exc}")
+        return errors, warnings
+
+    area_vocab: set[str] = set(config.get("area_vocab") or [])
+    code_roots: list[str] = config.get("code_roots") or []
+    test_roots: list[str] = config.get("test_roots") or []
+    flag_sources: list[dict] = config.get("flag_sources") or []
+    safety_areas: set[str] = set(config.get("safety_areas") or [])
+
+    # --- Load registry -----------------------------------------------------
+    if not os.path.isfile(registry_path):
+        print(f"NOTICE: no registry found at {registry_path!r} — nothing to check.")
+        return [], []
+
+    try:
+        reg_data = load_yaml(registry_path) or {}
+    except Exception as exc:
+        errors.append(f"Cannot load registry {registry_path!r}: {exc}")
+        return errors, warnings
+
+    requirements: list[dict] = reg_data.get("requirements") or []
+    if not isinstance(requirements, list):
+        errors.append("Registry 'requirements' field must be a list.")
+        return errors, warnings
+
+    # --- C01: Duplicate IDs ------------------------------------------------
+    seen_ids: dict[str, int] = {}
+    for i, req in enumerate(requirements):
+        rid = req.get("id", f"<no-id@index-{i}>")
+        if rid in seen_ids:
+            errors.append(f"C01 Duplicate id {rid!r} (indices {seen_ids[rid]} and {i})")
+        else:
+            seen_ids[rid] = i
+
+    # --- Per-entry checks --------------------------------------------------
+    for req in requirements:
+        rid = req.get("id", "<no-id>")
+        status = req.get("status", "")
+        priority = req.get("priority", "")
+        area = req.get("area", "")
+        flag = req.get("flag")
+        code = req.get("code") or []
+        tests = req.get("tests") or []
+        satisfied_by = req.get("satisfied_by") or []
+        removed_reason = req.get("removed_reason")
+        owner_approved = req.get("owner_approved", False)
+        source = req.get("source", "")
+
+        # C02: status vocab
+        if status not in STATUS_VOCAB:
+            errors.append(
+                f"C02 {rid}: unknown status {status!r} (allowed: {sorted(STATUS_VOCAB)})"
+            )
+
+        # C03: priority vocab
+        if priority not in PRIORITY_VOCAB:
+            errors.append(
+                f"C03 {rid}: unknown priority {priority!r} (allowed: {sorted(PRIORITY_VOCAB)})"
+            )
+
+        # C04: area vocab (only check when vocab is declared)
+        if area_vocab and area not in area_vocab:
+            errors.append(
+                f"C04 {rid}: area {area!r} not in area_vocab {sorted(area_vocab)}"
+            )
+
+        # C05: implemented must have non-empty code, tests, satisfied_by
+        if status == "implemented":
+            if not code:
+                errors.append(f"C05 {rid}: status:implemented but code is empty")
+            if not tests:
+                errors.append(f"C05 {rid}: status:implemented but tests is empty")
+            if not satisfied_by:
+                errors.append(f"C05 {rid}: status:implemented but satisfied_by is empty")
+
+            # C06: every code/test path must resolve to ≥1 real file
+            for pattern in code:
+                if not resolve_paths([pattern], code_roots, repo_root):
+                    errors.append(
+                        f"C06 {rid}: code path/glob {pattern!r} resolves to 0 files under code_roots"
+                    )
+            for pattern in tests:
+                if not resolve_paths([pattern], test_roots, repo_root):
+                    errors.append(
+                        f"C06 {rid}: tests path/glob {pattern!r} resolves to 0 files under test_roots"
+                    )
+
+        # C09: removed must have removed_reason
+        if status == "removed":
+            if not removed_reason:
+                errors.append(
+                    f"C09 {rid}: status:removed but removed_reason is null/empty"
+                )
+
+        # C10: safety-locked removal needs owner_approved
+        is_safety_locked = (priority == "P0") or (area in safety_areas)
+        if status == "removed" and is_safety_locked and not owner_approved:
+            errors.append(
+                f"C10 {rid}: safety-locked req (P0 or area in safety_areas) moved to "
+                f"removed without owner_approved:true"
+            )
+
+        # C12: source empty for non-proposed
+        if status != "proposed" and not source:
+            warnings.append(
+                f"C12 {rid}: source field is empty for a {status!r} requirement"
+            )
+
+        # C07 deferred until after flag_source loading below
+        req["_flag"] = flag  # stash for C07
+
+    # --- Build flag key universe from all flag_sources ---------------------
+    all_flag_keys: set[str] = set()
+    if flag_sources:
+        for src in flag_sources:
+            all_flag_keys |= extract_flag_keys(src, repo_root)
+
+    # --- C07 / C11 flag drift checks ---------------------------------------
+    if flag_sources:
+        registry_flag_values: set[str] = set()
+        for req in requirements:
+            flag = req.get("_flag")
+            if flag and flag is not None:
+                registry_flag_values.add(flag)
+                # C07: flag value not in any flag_source
+                if flag not in all_flag_keys:
+                    errors.append(
+                        f"C07 {req['id']}: flag {flag!r} not found in any configured flag_source"
+                    )
+
+        # C11: flag in a source with no registry entry
+        for key in all_flag_keys:
+            if key not in registry_flag_values:
+                warnings.append(
+                    f"C11 flag key {key!r} exists in a flag_source but has no matching "
+                    f"registry entry with flag:{key!r}"
+                )
+
+    # --- C08: append-only (baseline comparison) ----------------------------
+    reg_rel = os.path.relpath(registry_path, repo_root)
+    baseline_content = git_show(baseline_ref, reg_rel, repo_root)
+    if baseline_content is not None:
+        try:
+            baseline_data = yaml.safe_load(baseline_content) or {}
+            baseline_reqs: list[dict] = baseline_data.get("requirements") or []
+            baseline_ids = {r.get("id") for r in baseline_reqs if r.get("id")}
+            current_ids = set(seen_ids.keys())
+            disappeared = baseline_ids - current_ids
+            for missing_id in sorted(disappeared):
+                errors.append(
+                    f"C08 append-only violation: id {missing_id!r} was in {baseline_ref} "
+                    f"but is missing from the current registry — set status:removed instead"
+                )
+        except yaml.YAMLError as exc:
+            warnings.append(f"Could not parse baseline registry for C08 check: {exc}")
+    else:
+        # No baseline available (e.g. first commit, shallow clone) — skip C08 silently
+        pass
+
+    return errors, warnings
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Massoh RMT validator — checks requirements registry against config."
+    )
+    parser.add_argument(
+        "--config",
+        default="agent-project/requirements.config.yml",
+        help="Path to the project RMT config (default: agent-project/requirements.config.yml)",
+    )
+    parser.add_argument(
+        "--registry",
+        default="requirements/registry.yml",
+        help="Path to the requirements registry (default: requirements/registry.yml)",
+    )
+    parser.add_argument(
+        "--baseline",
+        default="HEAD~1",
+        help="Git ref for append-only check baseline (default: HEAD~1)",
+    )
+    parser.add_argument(
+        "--repo-root",
+        default=None,
+        help="Project root directory (default: current working directory)",
+    )
+    args = parser.parse_args()
+
+    repo_root = args.repo_root or os.getcwd()
+    config_path = os.path.join(repo_root, args.config)
+    registry_path = os.path.join(repo_root, args.registry)
+
+    errors, warnings = run_checks(
+        config_path=config_path,
+        registry_path=registry_path,
+        baseline_ref=args.baseline,
+        repo_root=repo_root,
+    )
+
+    if warnings:
+        print(f"\nWARNINGS ({len(warnings)}):")
+        for w in warnings:
+            print(f"  WARN  {w}")
+
+    if errors:
+        print(f"\nERRORS ({len(errors)}):")
+        for e in errors:
+            print(f"  ERROR {e}")
+        print(f"\nreq-check: FAILED ({len(errors)} error(s), {len(warnings)} warning(s))")
+        return 1
+
+    print(
+        f"req-check: PASSED (0 errors, {len(warnings)} warning(s))"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,50 @@
+# agent-project/requirements.config.yml — RMT config (Massoh RMT)
+#
+# Copy this file to your project as: agent-project/requirements.config.yml
+# Schema doc: ~/.claude/agent-os/policies/14_REQUIREMENTS_TRACEABILITY.md
+#
+# PRESENCE OF THIS FILE enables RMT for the project.
+# ABSENCE of this file = RMT is fully dormant (req-check exits 0 immediately).
+#
+# Every field is project-specific. The engine contains no defaults.
+
+# area_vocab — controlled list of AREA tokens used in requirement IDs.
+# REQ-<AREA>-<NNN>  IDs are validated against this list.
+# Add all area tokens your project uses. Example: [SAFE, DIAG, PERF, UX, INFRA]
+area_vocab: []
+
+# code_roots — directories under which req-check resolves code: paths/globs.
+# Paths in a requirement's `code:` list must resolve to ≥1 real file here
+# when status is `implemented`.
+# Example: [src/, lib/, backend/]
+code_roots: []
+
+# test_roots — directories under which req-check resolves tests: paths/globs.
+# Example: [tests/, spec/, backend/tests/]
+test_roots: []
+
+# narrative_doc — path to the human-prose requirements file.
+# Used as a reference anchor; req-check does not parse it (no machine coupling).
+# Example: docs/REQUIREMENTS.md
+narrative_doc: ""
+
+# flag_sources — 0..N flag-list locations for cross-validating `flag:` values.
+# Each entry declares a file + a parser key. Supported parsers:
+#   python-allowlist  — reads keys from a top-level dict/list named ALLOWLIST or DEFAULTS
+#   yaml-keys         — reads top-level YAML mapping keys
+#   json-keys         — reads top-level JSON object keys
+#   kotlin-object-keys — reads field names from a Kotlin `object` block (line-based heuristic)
+# Leave this list empty if the project has no flag sources to validate.
+# Example:
+# flag_sources:
+#   - path: config/flags.py
+#     parser: python-allowlist
+#   - path: config/feature_flags.yml
+#     parser: yaml-keys
+flag_sources: []
+
+# safety_areas — subset of area_vocab whose requirements are treated as P0-locked.
+# A requirement in one of these areas (regardless of its declared priority) requires
+# owner_approved: true before it can move to status: removed.
+# Example: [SAFE]
+safety_areas: []

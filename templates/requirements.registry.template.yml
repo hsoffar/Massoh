@@ -1,0 +1,68 @@
+# requirements/registry.yml — Requirements registry (Massoh RMT)
+#
+# Copy this file to your project as: requirements/registry.yml
+# Schema doc: ~/.claude/agent-os/policies/14_REQUIREMENTS_TRACEABILITY.md
+#
+# RULES
+# - IDs are stable and permanent. Never delete an entry.
+#   Removal = set status: removed + fill removed_reason.
+# - AREA must be in your project's area_vocab (requirements.config.yml).
+# - status: implemented requires non-empty code, tests, satisfied_by AND
+#   every listed path must resolve to ≥1 real file under the declared roots.
+# - A safety-locked req (P0 priority OR area in safety_areas) needs
+#   owner_approved: true before it can move to status: removed.
+# - flag: must match a key in a configured flag_source, or be null.
+#
+# STATUS vocabulary: proposed | implemented | deferred | frozen | removed
+# PRIORITY vocabulary: P0 (non-negotiable) | P1 | P2 | P3
+
+requirements:
+
+  # ---------- EXAMPLE ENTRY (proposed) ----------
+  # Replace or delete this block when seeding your own registry.
+  - id: REQ-AREA-001
+    title: "Short human-readable title for this requirement"
+    area: AREA                      # replace with a value from your area_vocab
+    status: proposed
+    priority: P1
+    flag: null                      # null = core (always active); or <flag-key>
+    code:  []                       # paths/globs relative to a code_root
+    tests: []                       # paths/globs relative to a test_root
+    satisfied_by: []                # PR/commit refs, e.g. ["PR#42", "abc1234"]
+    adr: []                         # ADR IDs, e.g. ["ADR-003"]
+    source: ""                      # anchor in narrative_doc, e.g. "docs/REQUIREMENTS.md#section"
+    removed_reason: null            # required (non-null string) when status: removed
+    superseded_by: null             # REQ-ID of the replacement, or null
+    owner_approved: false           # set true (+ owner sign-off recorded) for safety-locked removal
+
+  # ---------- EXAMPLE ENTRY (implemented) ----------
+  # - id: REQ-AREA-002
+  #   title: "Another requirement that is already built"
+  #   area: AREA
+  #   status: implemented
+  #   priority: P0
+  #   flag: null
+  #   code:  [src/module/feature.py]
+  #   tests: [tests/test_feature.py]
+  #   satisfied_by: [PR#7]
+  #   adr: []
+  #   source: "docs/REQUIREMENTS.md#feature"
+  #   removed_reason: null
+  #   superseded_by: null
+  #   owner_approved: false
+
+  # ---------- EXAMPLE ENTRY (removed / superseded) ----------
+  # - id: REQ-AREA-003
+  #   title: "Old approach that was replaced"
+  #   area: AREA
+  #   status: removed
+  #   priority: P2
+  #   flag: null
+  #   code:  []
+  #   tests: []
+  #   satisfied_by: []
+  #   adr: []
+  #   source: ""
+  #   removed_reason: "Replaced by REQ-AREA-004 — new approach is simpler and covers same scope"
+  #   superseded_by: REQ-AREA-004
+  #   owner_approved: false    # only needed for P0/safety-area removal; false is fine here
