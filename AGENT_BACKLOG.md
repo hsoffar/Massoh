@@ -95,3 +95,4 @@ slices 2+), Fleet layer (slices 3–4: cross-repo lessons pool → engine self-c
 | 14 | P3 | Fix verb load-order fragility — lib/verbs/_config.sh sorts after board.sh in UTF-8; source helpers explicitly or LC_COLLATE=C before the glob | TODO |
 | 15 | P1 | bats inline-copy drift — test/run.sh SR_HELPER duplicates manifest_schema_ver(); extract a sourceable helper or add cross-ref guard | **DONE** — PR #30 (drift guard) |
 | 16 | P3 | Full bats port — migrate remaining test/run.sh sections to bats once test suite is split per-verb (deferred from #12) | TODO |
+| 17 | P0 | test/run.sh not parallel-safe — concurrent runs collide on shared $TMP/HOME/doctor-network state (2 spurious fails observed); isolate per-run tmp or document single-run-only | TODO |
