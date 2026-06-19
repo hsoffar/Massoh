@@ -1,0 +1,25 @@
+# massoh-gate.yml — CI license-to-code gate (GitHub Actions workflow template).
+# Copied to .github/workflows/massoh-gate.yml by: massoh gate on
+# Removed by owner manually (massoh gate off does NOT delete user-tracked files per NON_NEGOTIABLES).
+# Server-side enforcement: complements the local pre-push hook; cannot be bypassed with --no-verify.
+# Emergency bypass: set repository secret MASSOH_GATE_OVERRIDE=1.
+name: massoh-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  gate:
+    name: License-to-code gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history needed for git diff
+
+      - name: Run massoh gate check
+        env:
+          MASSOH_GATE_OVERRIDE: ${{ secrets.MASSOH_GATE_OVERRIDE || '' }}
+        run: |
+          bash scripts/massoh-gate-check --ci "${{ github.event.pull_request.base.sha }}"

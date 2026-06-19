@@ -33,6 +33,9 @@ global_install:
 # Per-repo scaffold created by `massoh on` (NEVER overwritten — created only if missing):
 project_scaffold:
   marker: .massoh                                   # presence = "this repo is a Massoh project"
+  # NOTE: .git/hooks/pre-push is intentionally NOT listed here. It is a per-repo ephemeral
+  # artifact managed exclusively by `massoh gate on` / `massoh gate off`. It is not tracked
+  # by git and is not installed or removed by `massoh on` / `massoh install` / `massoh uninstall`.
   create_if_missing:
     - { dest: CLAUDE.md,                 source: templates/CLAUDE.project.template.md }
     - { dest: agent-project/CHARTER.md,          source: templates/CHARTER.template.md }
@@ -45,3 +48,7 @@ project_scaffold:
     - { dest: memory/SCHEMA.md,          source: templates/MEMORY_SCHEMA.md }
     - { dest: memory/MEMORY.md,          source: null }   # seeded with a "# Memory index" header by `massoh on`
     - { dest: .agent_tasks/.gitkeep,     source: null }
+    # Gate templates — installed by `massoh gate on` (not by `massoh on`):
+    - { dest: .github/workflows/massoh-gate.yml, source: templates/massoh-gate.yml }
+    # templates/massoh-pre-push is used by `massoh gate on` to install/append the hook content
+    # into .git/hooks/pre-push; it is not scaffolded as a tracked project file.

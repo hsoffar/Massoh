@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# massoh-gate-check — shared license-to-code gate checker.
+# Called by: .git/hooks/pre-push (pre-push mode) or CI (--ci <base-ref> mode).
+# Exit 0 = allow. Exit 1 = block (no approved 04_implementation_packet.md found).
+# Escape hatch: MASSOH_GATE_OVERRIDE=1 → exit 0 with warning (G8: must be FIRST check).
+# Bypass: git push --no-verify (standard git; this script is never invoked).
+# POSIX bash, set -euo pipefail, builtins only (bash git find grep printf awk sed case).
+set -euo pipefail
+
+# G8 — OVERRIDE is the very first statement; exits 0 before any diff/find/git call.
+[ "${MASSOH_GATE_OVERRIDE:-}" = "1" ] && {
+  printf '[massoh-gate] OVERRIDE active — gate bypassed. Record justification in commit message.\n'
+  exit 0
+}
+
+# G5 / G6 — classify a single path as exempt (return 0) or non-exempt (return 1).
+# Uses case/grep -E on the path STRING, not shell glob expansion (R2, R9).
+# Exempt list exactly per 01_product_scope.md §3:
+#   *.md, .agent_tasks/*, agent-project/*, memory/*, AGENT_SYNC.md, AGENT_BACKLOG.md,
+#   .massoh, LICENSE, .gitignore, .gitattributes, .github/*
+is_exempt() {
+  local path="$1"
+  case "$path" in
+    *.md)              return 0 ;;
+    .agent_tasks/*)    return 0 ;;
+    agent-project/*)   return 0 ;;
+    memory/*)          return 0 ;;
+    AGENT_SYNC.md)     return 0 ;;
+    AGENT_BACKLOG.md)  return 0 ;;
+    .massoh)           return 0 ;;
+    LICENSE)           return 0 ;;
+    .gitignore)        return 0 ;;
+    .gitattributes)    return 0 ;;
+    .github/*)         return 0 ;;
+  esac
+  return 1
+}
+
+# Check whether an approved 04_implementation_packet.md exists (G5, R9).
+# find … 2>/dev/null suppresses errors if .agent_tasks/ doesn't exist; the pipeline
+# is wrapped in an if so set -euo pipefail cannot abort on a non-zero grep exit.
+has_packet() {
+  if find .agent_tasks -name "04_implementation_packet.md" 2>/dev/null | grep -q .; then
+    return 0
+  fi
+  return 1
+}
+
+# Scan a list of paths (one per line) for any non-exempt entry.
+# Returns 0 (clean) or 1 (non-exempt path found without packet).
+check_paths() {
+  local found_nonexempt=0
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    if ! is_exempt "$path"; then
+      found_nonexempt=1
+      break
+    fi
+  done
+  echo "$found_nonexempt"
+}
+
+# ── PRE-PUSH MODE ──────────────────────────────────────────────────────────────
+# Git passes lines: <local-ref> <local-sha> <remote-ref> <remote-sha>
+# G7: null-SHA (0000…0000) or empty diff → exit 0 (first push or no diff).
+run_prepush() {
+  local NULL_SHA="0000000000000000000000000000000000000000"
+  local found_nonexempt=0
+
+  while read -r local_ref local_sha remote_ref remote_sha; do
+    # G7 — null-SHA on remote means first push: no previous commit to diff against.
+    if [ "$remote_sha" = "$NULL_SHA" ]; then
+      # First push: try git diff-tree; degrade to exit 0 if it fails.
+      local paths
+      paths="$(git diff-tree --no-commit-id -r --name-only "$local_sha" 2>/dev/null || true)"
+      if [ -z "$paths" ]; then
+        continue  # Cannot determine diff, degrade to allow.
+      fi
+      if [ "$(printf '%s\n' "$paths" | check_paths)" = "1" ]; then
+        found_nonexempt=1
+      fi
+      continue
+    fi
+
+    # G7 — local_sha is null (deleted ref): skip.
+    if [ "$local_sha" = "$NULL_SHA" ]; then
+      continue
+    fi
+
+    # Normal push: diff between remote tip and local tip.
+    local paths
+    paths="$(git diff --name-only "$remote_sha" "$local_sha" 2>/dev/null || true)"
+    if [ -z "$paths" ]; then
+      continue  # G7 — empty diff → allow.
+    fi
+    if [ "$(printf '%s\n' "$paths" | check_paths)" = "1" ]; then
+      found_nonexempt=1
+    fi
+  done
+
+  if [ "$found_nonexempt" = "0" ]; then
+    exit 0  # All paths exempt.
+  fi
+
+  if has_packet; then
+    exit 0  # Licensed push.
+  fi
+
+  printf '[massoh-gate] BLOCKED: no approved 04_implementation_packet.md found under .agent_tasks/.\n'
+  printf '  Add a licensed packet, use MASSOH_GATE_OVERRIDE=1 for emergency bypass,\n'
+  printf '  or run: git push --no-verify  (bypasses local hook only; CI will still check).\n'
+  printf '  To remove this gate: massoh gate off\n'
+  exit 1
+}
+
+# ── CI MODE ────────────────────────────────────────────────────────────────────
+# Usage: massoh-gate-check --ci <base-ref>
+# G7: if git diff returns empty (no changed files), exit 0.
+# G9: invoked as bash scripts/massoh-gate-check --ci "${{ github.event.pull_request.base.sha }}"
+run_ci() {
+  local base_ref="$1"
+  local paths
+  # G7 — if diff is empty, degrade to exit 0.
+  paths="$(git diff --name-only "${base_ref}...HEAD" 2>/dev/null || true)"
+
+  if [ -z "$paths" ]; then
+    exit 0  # G7: empty diff → allow.
+  fi
+
+  if [ "$(printf '%s\n' "$paths" | check_paths)" = "0" ]; then
+    exit 0  # All paths exempt.
+  fi
+
+  if has_packet; then
+    exit 0  # Licensed push.
+  fi
+
+  printf '[massoh-gate] CI BLOCKED: no approved 04_implementation_packet.md found under .agent_tasks/.\n'
+  printf '  This PR contains changes to non-exempt paths and has no licensed implementation packet.\n'
+  printf '  Set MASSOH_GATE_OVERRIDE=1 in your repository secrets for emergency bypass.\n'
+  exit 1
+}
+
+# ── DISPATCH ───────────────────────────────────────────────────────────────────
+case "${1:-}" in
+  --ci)
+    shift
+    [ -n "${1:-}" ] || { printf '[massoh-gate] --ci requires a base ref argument\n' >&2; exit 1; }
+    run_ci "$1"
+    ;;
+  "")
+    run_prepush
+    ;;
+  *)
+    printf '[massoh-gate] unknown argument: %s\n' "$1" >&2
+    printf 'usage: massoh-gate-check [--ci <base-ref>]\n' >&2
+    exit 1
+    ;;
+esac
