@@ -15,7 +15,10 @@ die(){ printf 'massoh-cron: %s\n' "$*" >&2; exit 1; }
 slugify(){ printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-40; }
 
 AGENT_CMD="${MASSOH_AGENT_CMD:-claude -p}"
-IDLE_MIN=25
+# PC9: source _config.sh directly (cron is not in bin/massoh's verb-loading loop). || true = PC5.
+[ -f "${MASSOH_HOME:-}/lib/verbs/_config.sh" ] && . "${MASSOH_HOME:-}/lib/verbs/_config.sh" || true
+# PC6 call-site 3 of 3 / PC2: read cron_idle_min; integer-validate before use; malformed → default 25.
+_raw_idle="$(massoh_config_get "$REPO/agent-project/config.yml" "cron_idle_min" "25" 2>/dev/null || true)"; case "$_raw_idle" in ''|*[!0-9]*) IDLE_MIN=25 ;; *) IDLE_MIN="$_raw_idle" ;; esac
 
 # Resolve the massoh binary: prefer MASSOH_HOME (set by bin/massoh caller), else derive from script location
 _massoh_bin(){

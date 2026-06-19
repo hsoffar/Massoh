@@ -11,6 +11,23 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.14.0] - 2026-06-19
+### Added
+- **`agent-project/config.yml` (optional)** — project-level tunable overrides via a pure-bash
+  YAML-lite reader (`lib/verbs/_config.sh`). Absent/empty/malformed config = byte-identical
+  existing behavior (PC1 central guarantee). Supports flat `key: value` pairs; handles inline
+  comments, quoted values, extra whitespace. No new dependencies (pure grep/sed, POSIX-bash).
+  - **3 tunables wired (MVP scope):**
+    - `meta_outlier_factor` — token-outlier multiplier for `massoh meta` (default 2).
+    - `meta_repeat_threshold` — repeated-finding promotion threshold for `massoh meta` (default 3).
+    - `cron_idle_min` — owner-idleness window for `massoh cron` (default 25).
+  - **Precedence:** project (`agent-project/config.yml`) > built-in default. Global tier deferred.
+  - **Secret guard:** keys matching `_token|_key|_secret|_password|_credential` warn to stderr
+    and return the built-in default; config.yml is a committable file and must not hold secrets.
+  - **Integer validation (PC2):** every config value used in arithmetic is validated with the
+    ledger.sh L2 `case` pattern before use; malformed values fall back to built-in defaults.
+  - No scaffold/manifest change (no-scaffold path); `massoh on` is unchanged.
+
 ## [0.13.0] - 2026-06-19
 ### Added
 - **`massoh fleet [--root <dir>] [--no-cache]`** — read-only multi-repo rollup verb.
