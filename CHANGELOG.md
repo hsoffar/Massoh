@@ -11,6 +11,21 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.13.0] - 2026-06-19
+### Added
+- **`massoh fleet [--root <dir>] [--no-cache]`** — read-only multi-repo rollup verb.
+  Discovers opted-in Massoh repos (`.massoh` marker) under `--root` (bounded `find -maxdepth 3`,
+  cap 200 repos) or via a `~/.claude/massoh/fleet.tsv` registry (one path per line), and prints
+  per-repo stage counts (todo/doing/done), blocked count, and last-handoff agent/mode from
+  `AGENT_SYNC.md`. **Writes nothing to any discovered repo** (structural write-isolation: FL1).
+  - Degrade: per-repo failures produce `[SKIP] <path>: <reason>` and the loop continues (FL5).
+  - Missing root or no registry: exit 0 with an informational message (FL2/FL3).
+  - `fleet.tsv` sanitized with `while IFS= read -r`; paths validated with `[ -d ]`; lines
+    >4096 chars discarded; never sourced or eval'd (FL3/FL4).
+  - PRIVACY: local-only output, nothing uploaded (FL8). No network primitives (FL7).
+  - Discovery root is a parameter (`--root` / `MASSOH_FLEET_ROOT`) — never hard-coded (expansion
+    principle). `MASSOH_FLEET_TSV` overrides the registry path.
+
 ## [0.12.0] - 2026-06-19
 ### Added
 - **`massoh intake "<idea>"`** — fast idea-capture verb: append one ranked row to a dedicated
