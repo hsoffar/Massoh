@@ -31,12 +31,12 @@ Ordered by value × dependency. **`bin/massoh` is the serialization bottleneck**
 | 4 | P1 | **`massoh intake` (idea triage)** — append-only inbox + priority. See [[massoh-idea-intake]] | Y | **DONE** — PR #20, v0.12.0 |
 | 5 | P1 | **Auto-ledger via SubagentStop hook** — capture tokens/time per stage | Y+hook | **DEFERRED** — hook payload lacks token/time/task-id; re-entry A/B/C in AGENT_SYNC |
 | 6 | P1 | **Fleet slice 2** — repo registry + read-only multi-repo rollup. Slice of [[massoh-fleet-vision]]; brief `agent-project/briefs/fleet-multi-repo-self-curing.md` | Y | **DONE** — PR #21, v0.13.0 |
-| 7 | P1 | **RMT slice 1** — policy doc + templates + `req-check` reference + skill (PROPOSE-ONLY). Spec `agent-project/briefs/RMT-requirements-traceability.md` | N (mostly) | TODO |
+| 7 | P1 | **RMT slice 1** — policy doc + templates + `req-check` reference + skill (PROPOSE-ONLY). Spec `agent-project/briefs/RMT-requirements-traceability.md` | N (mostly) | **DONE** — PR #25+#26, v0.17.0 |
 | 8 | P2 | **`board` local renderer** (HTML/Obsidian) — offline slice, no Plane needed | Y | **DONE** — PR #23, v0.15.0 |
 | 9 | P2 | **Profiles + single `config.yml`** — archetypes; consolidate config | Y | **DONE** — PR #22, v0.14.0 |
 | 10 | P2 | **Emit `AGENTS.md`** from the roles — multi-harness portability | Y | **DONE** — PR #24, v0.16.0 |
-| 11 | P2 | **Rename `manifest.yml version:` → `schema_version:`** — disambiguate from product VERSION | Y+manifest | TODO |
-| 12 | P3 | **`test/run.sh` → bats** + commit-conv ratio in discover | N (tests) | TODO |
+| 11 | P2 | **Rename `manifest.yml version:` → `schema_version:`** — disambiguate from product VERSION | Y+manifest | **DONE** — PR #27, v0.18.0 |
+| 12 | P3 | **`test/run.sh` → bats** (scoped: infra + T1 pilot; full port deferred) | N (tests) | **DONE** — PR #28, v0.19.0 |
 
 **Epics tracked separately (each yields more slices after the above):** RMT (full traceability,
 slices 2+), Fleet layer (slices 3–4: cross-repo lessons pool → engine self-cure). See the briefs.
@@ -87,3 +87,11 @@ slices 2+), Fleet layer (slices 3–4: cross-repo lessons pool → engine self-c
 | P1 | `massoh discover` + `STANDARDS.md` layer (wired into implementer/reviewer) | TASK-massoh-cli-verbs (branch, pending merge) | 2026-06-16 |
 | P2 | `massoh doctor` + first CLI test suite (`test/run.sh`, 21 checks) | TASK-massoh-cli-verbs | 2026-06-16 |
 | P1 | Harden `massoh update` (stash→pull→pop, fail-safe) | TASK-massoh-cli-verbs | 2026-06-16 |
+
+## Intake inbox
+| # | Pri | Item | Status |
+|---|---|---|---|
+| 13 | P0 | Harden T6 doctor update-check — network-flaky, fails in CI; make offline-safe or skip when no network | TODO |
+| 14 | P3 | Fix verb load-order fragility — lib/verbs/_config.sh sorts after board.sh in UTF-8; source helpers explicitly or LC_COLLATE=C before the glob | TODO |
+| 15 | P1 | bats inline-copy drift — test/run.sh SR_HELPER duplicates manifest_schema_ver(); extract a sourceable helper or add cross-ref guard | TODO |
+| 16 | P3 | Full bats port — migrate remaining test/run.sh sections to bats once test suite is split per-verb (deferred from #12) | TODO |

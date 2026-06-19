@@ -4,21 +4,18 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-19 (24h-queue — **11 SHIPPED v0.9→v0.18** (#11 schema-rename merged PR #27). #5 DEFERRED. Last item **#12 bats** at arch-safety — note: bats NOT installed, suite = 483 checks, CI runs `bash test/run.sh`; arch-safety to weigh big-bang vs scoped vs defer (P3). **Follow-up: T6 network-flaky in CI.**)
+Last updated: 2026-06-19 (**24h QUEUE COMPLETE** — 12 features shipped v0.9→**v0.19**, 1 deferred (#5 auto-ledger, honest). PRs #16–#28. Suite 204→463 green. bin/massoh 1662→216 (13 lib/verbs). All gated; reviewer caught real issues incl. my append-only slip. Follow-ups queued: T6 CI-flaky, verb load-order NB-1, bats inline-copy drift, full bats port.)
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**24h queue fan-out (auto-merge-on-green).** bin/massoh modularized (#3 merged) → verb items now
-parallelize via worktrees. Driving the remaining queue: #2 dogfood gate+CI, #4 intake, #5 auto-ledger
-hook, #6 fleet rollup, #7 RMT slice 1, #8 board renderer, #9 profiles, #10 AGENTS.md, #11 schema_version,
-#12 bats. Each: arch-safety (batch-authorized for bin/massoh) → implementer → reviewer-qa → auto-merge
-on green; PRs reviewable post-hoc. See `AGENT_BACKLOG.md` §24h-plan.
+**None — 24h queue complete.** Next work pulls from `AGENT_BACKLOG.md` (follow-ups inbox) via
+`/start-task`. Pending owner-optional: deploy v0.19.0 to `~/.claude` via `massoh update`; commit/gitignore `deck/`.
 
-**Last shipped:** TASK-2026-06-19-modularize-bin — bin/massoh → lib/verbs (pure extraction).
-**Merged PR #18 → `fa83bcf`, VERSION 0.11.0**, 301/301 green, MB1–MB8 verified, byte-identical proven.
+**Last shipped:** TASK-2026-06-19-bats — scoped bats infra + T1 pilot. **Merged PR #28, VERSION 0.19.0**,
+bats 6/6 + run.sh 463 green. Completed the 24h queue (12 features v0.9→v0.19; #5 deferred).
 
 ## Open questions (owner decision needed)
 | Question | Raised | Context |
@@ -98,6 +95,7 @@ on green; PRs reviewable post-hoc. See `AGENT_BACKLOG.md` §24h-plan.
 | 2026-06-19 | **Owner SIGNED OFF on all 3 remaining queue items** — #7 RMT (manifest.yml + bin/massoh install/doctor lockstep + policy 03/05/08/11 cross-links + VERSION 0.17.0), #11 schema-rename (manifest.yml version:→schema_version:), #12 bats (test/run.sh port). Drive serial #7→#11→#12; auto-merge-on-green; each still arch-safety+reviewer-qa gated. | owner |
 | 2026-06-19 | TASK-2026-06-19-rmt (#7): **APPROVE** — RG1–RG10 all independently verified (line refs in 06_review_result); 448/449 green (self-witnessed 3 runs); T6 "doctor flags update available" confirmed pre-existing on main (1/418 baseline); GAP-1 lockstep proven: `scripts` in both cmd_install+cmd_doctor loops, `ok agent-os/scripts` in live doctor; GAP-2 verified line 323 `req.get('id','<no-id>')`; additive-only confirmed per-file (0 deletions) for all 6 policy/doc files; 31/31 T-RMT assertions green; scope clean; AGENT_SYNC.md+AGENT_BACKLOG.md untouched; NB-1 req: row format (non-blocking); NB-2 T-RMT-i no-id sub-case not explicitly tested (non-blocking, fix verified by code inspection). | reviewer-qa |
 | 2026-06-19 | TASK-2026-06-19-schema-rename (#11): **APPROVE** — SR1–SR7 all independently verified (line refs in 06_review_result); 463/463 green (self-witnessed, T6 network-green in this env); fallback proven live: T-SR-4 synthetic old-manifest returns 1 + stderr `deprecated`; T-SR-5 neither-key returns `unknown` exit 0; inline-copy (test/run.sh SR_HELPER) byte-identical to bin/massoh lines 22–31; SR3 grep clean (zero `^version:` key readers); manifest↔bin lockstep (0 deletions in bin/massoh, 12 lines added — helper only); install/uninstall/block logic untouched; AGENT_SYNC.md+AGENT_BACKLOG.md untouched; owner sign-off on record (manifest.yml + bin/massoh, #11 named explicitly); scope: 6 files only; NB-1 inline-copy drift risk (non-blocking, copy correct today); NB-2 T-SR-10 tautology (non-blocking, matches spec). | reviewer-qa |
+| 2026-06-19 | TASK-2026-06-19-bats (#12): **APPROVE** — BA1–BA7 all independently verified; bats 6/6 ok exit 0 (self-witnessed); run.sh 463/463 green exit 0 (self-witnessed); BA5: git diff --name-only main → 3 files only (.github/workflows/ci.yml, CHANGELOG.md, VERSION); bin/massoh/manifest.yml/templates/policies/NON_NEGOTIABLES.md/lib/verbs/test/run.sh all diff-clean; BA6: all 6 @tests invoke $MASSOH + assert real filesystem/exit conditions (T1-5 md5 snapshot read-only proof, T1-6 rm+drift+non-zero); BA7: per-test BATS_TEST_TMPDIR, no load/source of run.sh; ci.yml valid YAML, both steps present (run.sh line 24, bats line 27), bats install line 20 before both; VERSION 0.19.0; CHANGELOG [0.19.0] accurate; NB-1 redundant redirect on bats `run` line (non-breaking); NB-2 bats install before run.sh step (correct, mirrors jq pattern). | reviewer-qa |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -122,37 +120,38 @@ None.
 | TASK-2026-06-19-profiles (#9) | merged | DONE — PR #22 → main, VERSION 0.14.0 |
 | TASK-2026-06-19-board-renderer (#8) | merged | DONE — PR #23 → main, VERSION 0.15.0 |
 | TASK-2026-06-19-agentsmd (#10) | merged | DONE — PR #24 → main, VERSION 0.16.0 |
-| TASK-2026-06-19-rmt (#7) | 06_review_result | APPROVED — awaiting orchestrator merge → main (auto-merge-on-green) |
-| TASK-2026-06-19-schema-rename (#11) | 06_review_result | APPROVED — awaiting orchestrator merge → main (auto-merge-on-green) |
-| TASK-2026-06-19-bats (#12) | backlog | QUEUED — last (rewrites test/run.sh) |
+| TASK-2026-06-19-rmt (#7) | merged | DONE — PR #25 (proposal) + #26 (adoption) → main, VERSION 0.17.0 |
+| TASK-2026-06-19-schema-rename (#11) | merged | DONE — PR #27 → main, VERSION 0.18.0 |
+| TASK-2026-06-19-bats (#12) | merged | DONE — PR #28 → main, VERSION 0.19.0 |
 
 ## Last handoff
 ```
 Agent: massoh-reviewer-qa
 Mode: REVIEW_QA
-Task: TASK-2026-06-19-schema-rename (#11) -- manifest version: → schema_version: rename (v0.18.0)
+Task: TASK-2026-06-19-bats (#12) — bats infra (scoped), native T1 pilot (v0.19.0)
 Status: APPROVED. 06_review_result.md written.
-Branch: feat/schema-rename (working tree, uncommitted)
-Decision: APPROVE. SR1–SR7 all independently verified. 463/463 green (self-witnessed, T6 green).
-  SR1: both manifest.yml + bin/massoh in same diff (atomic). git diff --stat confirms.
-  SR2: manifest_schema_ver() at bin/massoh lines 20–31; greps schema_version: first, falls
-       back to version: with stderr deprecation note, defaults ${v:-unknown}; all || true.
-  SR3: grep -rn "^version:" manifest.yml bin/ lib/ test/ templates/ → zero output. Clean.
-  SR4: manifest.yml line 2 comment = "# schema_version: 1". Line 8 key = "schema_version: 1".
-  SR5: CHANGELOG.md line 4 updated; CHARTER.md line 43 updated; manifest comment (SR4 same).
-  SR6: all grep/awk in manifest_schema_ver() guarded || true (bin/massoh lines 25, 27, 28).
-  SR7: mver() (line 17) reads VERSION file, unchanged. VERSION bumped for release only.
-  T-SR-4 fallback proven live: synthetic old manifest → 1 + stderr "deprecated" (green).
-  T-SR-5 neither-key proven live: output unknown, exit 0 (green).
-  Inline-copy: SR_HELPER (test/run.sh lines 3018–3027) byte-identical to bin/massoh lines 22–31.
-  T11i/T15l/T16r/T22b: capture-at-test-time pattern confirmed (no hardcoded checksums). All green.
-  Scope: 6 files only. install/uninstall/block logic untouched. AGENT_SYNC.md + AGENT_BACKLOG.md untouched.
+Branch: feat/bats (working tree, uncommitted)
+Decision: APPROVE. BA1–BA7 all independently verified. Both suites green (self-witnessed).
+  BA5 (critical): git diff --name-only main = 3 files only (.github/workflows/ci.yml,
+       CHANGELOG.md, VERSION). bin/massoh, manifest.yml, templates/, policies/,
+       NON_NEGOTIABLES.md, lib/verbs/, test/run.sh — all clean (diff empty).
+  BA1: bash test/run.sh → ALL GREEN — 463 checks passed. Exit 0. (self-witnessed)
+  BA2: bats test/massoh.bats → 1..6, all ok. Exit 0. (self-witnessed, bats 1.10.0)
+  BA3: ci.yml line 24 bash test/run.sh step preserved; bats step (line 27) is additive.
+  BA4: ci.yml lines 20–21: sudo apt-get install -y bats, before both test steps.
+  BA6: All 6 @tests invoke $MASSOH with real CLAUDE_CONFIG_DIR; assert real filesystem/exit
+       (T1-5 md5-snapshot read-only proof; T1-6 rm-drift + non-zero exit).
+  BA7: Per-test $BATS_TEST_TMPDIR; no load/source from run.sh; fully self-contained.
+  ci.yml: YAML valid (python3 yaml.safe_load confirmed).
+  VERSION: 0.19.0. CHANGELOG [0.19.0] accurate.
+  AGENT_SYNC.md + AGENT_BACKLOG.md untouched in working tree.
 Non-blocking:
-  NB-1: Inline-copy drift risk — SR_HELPER correct today; recommend cross-ref comment in future.
-  NB-2: T-SR-10 tautology (before/after in back-to-back lines); non-harmful, matches spec.
-Next recommended agent: orchestrator (auto-merge feat/schema-rename per auto-merge-on-green policy)
-Next action: orchestrator squash-merges feat/schema-rename PR → main; VERSION 0.18.0 shipped;
-             bats (#12, last queue item) unblocked next.
+  NB-1: Trailing >/dev/null 2>&1 after bats `run` on line 103 is silently ignored by bats.
+        Test passes on $status assertion; non-breaking.
+  NB-2: bats apt install step precedes run.sh step; correct (mirrors jq pattern).
+Next recommended agent: orchestrator (auto-merge feat/bats per auto-merge-on-green policy)
+Next action: orchestrator squash-merges feat/bats PR → main; VERSION 0.19.0 shipped.
+             24h queue COMPLETE (items #1–#12 all shipped or deferred per policy).
 ```
 
 ## [meta-engineer] 2026-06-19 — RMT proposal (TASK-2026-06-19-rmt)
