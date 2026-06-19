@@ -11,6 +11,30 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.12.0] - 2026-06-19
+### Added
+- **`massoh intake "<idea>"`** — fast idea-capture verb: append one ranked row to a dedicated
+  `## Intake inbox` section of `AGENT_BACKLOG.md` (bootstrapped via `>>` on first use, after
+  Done/Frozen) + a one-line pointer to `memory/MEMORY.md`. Zero awk rewrite, zero sed -i,
+  zero `> file` redirect. Queue / Done / Frozen sections are never touched.
+  - **Priority heuristic (P0–P3, deterministic, zero LLM):** keyword scan on the lowercased idea.
+    P0: bug/broken/crash/fail/urgent/security/block. P1: add/implement/ship/feature/new verb/
+    enable/integrate. P2: improve/optimize/refactor/update/enhance. P3: everything else.
+    Keywords documented in `lib/verbs/intake.sh` as named constants.
+  - **Input sanitization:** strips `|`, `\n`, `\r`, tab from the idea string; truncates to 200
+    chars; rejects empty-after-strip with a usage message (exit non-zero, write nothing).
+  - **Arg guard first:** missing/empty arg → die, exit non-zero, write nothing.
+  - **Idempotent:** `grep -qF` check on BACKLOG; if idea already present, prints notice and
+    exits 0 without writing (prevents duplicate rows from re-runs).
+  - **Memory pointer:** appends one `- [intake: <first 60 chars>](<ts>)` line to
+    `memory/MEMORY.md` (append-only `>>`; failure is non-fatal via `|| true`).
+  - **Massoh-project guard:** requires `.massoh` or `agent-project/` before any write.
+  - **Degrade:** absent BACKLOG bootstraps the file (mkdir -p + section header via `>>`);
+    all reads use `|| true`; exit 0 on success, non-zero on arg/sanitization failure only.
+  - Read-only isolation: `cmd_intake` does NOT call `cmd_ledger`, `cmd_learn`, `cmd_meta`,
+    or any other `cmd_*`.
+  - Auto-wired by `cmd_install`'s existing `lib/verbs/` glob (no `manifest.yml` change).
+
 ## [0.11.0] - 2026-06-19
 ### Changed
 - **`bin/massoh` modularized** — 12 additive feature verbs extracted to `lib/verbs/*.sh`, sourced

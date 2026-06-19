@@ -1770,7 +1770,7 @@ check "T-MB-e missing lib file: stderr contains 'missing lib file'" \
 
 # T-MB-f: byte-identical output — invoke massoh <unknown-verb> before and after; diff must be empty.
 # Confirms MB5: non-dynamic output (die() usage line) is byte-identical after extraction.
-tmb_f_before="massoh: unknown command 'unknownverb'. verbs: install update on off enable disable status doctor discover review standup plan learn recommend ledger meta cron gate board version work uninstall [--link]"
+tmb_f_before="massoh: unknown command 'unknownverb'. verbs: install update on off enable disable status doctor discover review standup plan learn recommend ledger meta cron gate board intake version work uninstall [--link]"
 tmb_f_after="$("$MASSOH" unknownverb 2>&1 || true)"
 check "T-MB-f byte-identical unknown-verb die() output" \
   "[ '$tmb_f_before' = '$tmb_f_after' ]"
@@ -1818,6 +1818,166 @@ check "T-MB-g smoke: board dispatches (exit 0)"      "[ $rc_tmb_board -eq 0 ]"
 # version (always works)
 rc_tmb_version=0; "$MASSOH" version >/dev/null 2>&1 || rc_tmb_version=$?
 check "T-MB-g smoke: version dispatches (exit 0)"    "[ $rc_tmb_version -eq 0 ]"
+
+echo "== T-IK: massoh intake (idea capture, v0.12.0) =="
+
+# Helper: create a minimal Massoh project for intake tests.
+mkintakerepo() {
+  local d="$1"
+  mkdir -p "$d"
+  ( cd "$d" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+  printf 'massoh project marker\n' > "$d/.massoh"
+  mkdir -p "$d/agent-project" "$d/memory" "$d/.agent_tasks"
+  printf '# Memory index\n' > "$d/memory/MEMORY.md"
+  ( cd "$d" && git add -A && git commit -qm "feat: seed intake repo" )
+}
+
+# Helper: create a backlog with Queue + Done + Frozen rows for append-only tests.
+mkintakebacklog() {
+  local repo="$1"
+  cat > "$repo/AGENT_BACKLOG.md" <<'BACKLOG_EOF'
+# AGENT_BACKLOG
+
+## Queue
+| # | Pri | Item | Why | Status |
+|---|---|---|---|---|
+| 1 | P1 | existing queue item | reason | TODO |
+
+## Done
+| # | Pri | Item | Why | Status |
+|---|---|---|---|---|
+| 2 | P2 | done item | reason | DONE |
+
+## Frozen
+| # | Pri | Item | Why | Status |
+|---|---|---|---|---|
+| 3 | P3 | frozen item | reason | FROZEN |
+BACKLOG_EOF
+}
+
+# T-IK-a — append-only: Queue/Done/Frozen rows byte-identical after intake; no sed -i in source.
+IKa="$TMP/ika"; mkintakerepo "$IKa"
+mkintakebacklog "$IKa"
+before_ika="$(grep -E '^\| [0-9]+ \|' "$IKa/AGENT_BACKLOG.md" | head -3 | md5sum)"
+( cd "$IKa" && "$MASSOH" intake "add integration tests" >/dev/null 2>&1 )
+after_ika="$(grep -E '^\| [0-9]+ \|' "$IKa/AGENT_BACKLOG.md" | head -3 | md5sum)"
+check "T-IK-a Queue/Done/Frozen rows unchanged after intake (append-only)" \
+  "[ '$before_ika' = '$after_ika' ]"
+check "T-IK-a file has more lines after intake" \
+  "[ \"\$(wc -l < '$IKa/AGENT_BACKLOG.md')\" -gt 14 ]"
+check "T-IK-a zero sed -i calls in lib/verbs/intake.sh (structural)" \
+  "[ \"\$(grep -c 'sed -i' '$REPO_ROOT/lib/verbs/intake.sh')\" -eq 0 ]"
+
+# T-IK-b — pipe sanitization: idea with | chars produces no extra pipe in the idea cell.
+IKb="$TMP/ikb"; mkintakerepo "$IKb"
+( cd "$IKb" && "$MASSOH" intake "idea with | pipe | chars" >/dev/null 2>&1 )
+# The row must exist but the idea cell must not contain a raw | (pipes replaced by spaces)
+check "T-IK-b intake row exists in BACKLOG" \
+  "grep -q 'idea with' '$IKb/AGENT_BACKLOG.md'"
+# Extract the idea cell (field 4 in the Intake inbox row) and assert no raw pipe
+idea_cell_b="$(grep 'idea with' "$IKb/AGENT_BACKLOG.md" | awk -F'|' '{print $4}')"
+check "T-IK-b idea cell contains no literal pipe character" \
+  "! printf '%s' \"\$idea_cell_b\" | grep -qF '|'"
+
+# T-IK-c — newline sanitization: multi-line idea produces exactly one new row.
+IKc="$TMP/ikc"; mkintakerepo "$IKc"
+# Count table rows before (file may not exist yet — degrade to 0)
+rows_before_c="$(grep -cE '^\|[[:space:]]*[0-9]+[[:space:]]*\|' "$IKc/AGENT_BACKLOG.md" 2>/dev/null || echo 0)"
+( cd "$IKc" && "$MASSOH" intake $'multi\nline\nidea' >/dev/null 2>&1 )
+rows_after_c="$(grep -cE '^\|[[:space:]]*[0-9]+[[:space:]]*\|' "$IKc/AGENT_BACKLOG.md" 2>/dev/null || echo 0)"
+new_rows_c=$(( rows_after_c - rows_before_c ))
+check "T-IK-c newline sanitization: exactly one new table row added (not 3)" \
+  "[ $new_rows_c -eq 1 ]"
+check "T-IK-c intake row present in BACKLOG" \
+  "grep -q 'multi' '$IKc/AGENT_BACKLOG.md'"
+
+# T-IK-d — length truncation: 300-char idea truncated to ≤200 chars in the idea cell.
+IKd="$TMP/ikd"; mkintakerepo "$IKd"
+long_idea="$(printf '%0.s' {1..100})$(printf 'x%.0s' {1..300})"   # 300 x's
+( cd "$IKd" && "$MASSOH" intake "$long_idea" >/dev/null 2>&1 )
+# Extract the idea cell and measure length
+idea_cell_d="$(grep -E '^\|[[:space:]]*[0-9]+[[:space:]]*\|' "$IKd/AGENT_BACKLOG.md" | tail -1 | awk -F'|' '{print $4}')"
+idea_len_d="${#idea_cell_d}"
+check "T-IK-d idea cell is ≤200 chars after truncation (got $idea_len_d chars)" \
+  "[ $idea_len_d -le 210 ]"
+
+# T-IK-e — empty arg dies writing nothing (BACKLOG and MEMORY unchanged).
+IKe="$TMP/ike"; mkintakerepo "$IKe"
+printf '# Test backlog\n' > "$IKe/AGENT_BACKLOG.md"
+printf '# Memory index\n' > "$IKe/memory/MEMORY.md"
+before_bl_e="$(md5sum "$IKe/AGENT_BACKLOG.md" | awk '{print $1}')"
+before_mem_e="$(md5sum "$IKe/memory/MEMORY.md" | awk '{print $1}')"
+rc_ike=0
+( cd "$IKe" && "$MASSOH" intake "" >/dev/null 2>&1 ) || rc_ike=$?
+after_bl_e="$(md5sum "$IKe/AGENT_BACKLOG.md" | awk '{print $1}')"
+after_mem_e="$(md5sum "$IKe/memory/MEMORY.md" | awk '{print $1}')"
+check "T-IK-e empty arg: exit non-zero" "[ $rc_ike -ne 0 ]"
+check "T-IK-e empty arg: BACKLOG unchanged" "[ '$before_bl_e' = '$after_bl_e' ]"
+check "T-IK-e empty arg: MEMORY unchanged" "[ '$before_mem_e' = '$after_mem_e' ]"
+
+# T-IK-f — missing arg dies writing nothing.
+IKf="$TMP/ikf"; mkintakerepo "$IKf"
+printf '# Test backlog\n' > "$IKf/AGENT_BACKLOG.md"
+printf '# Memory index\n' > "$IKf/memory/MEMORY.md"
+before_bl_f="$(md5sum "$IKf/AGENT_BACKLOG.md" | awk '{print $1}')"
+before_mem_f="$(md5sum "$IKf/memory/MEMORY.md" | awk '{print $1}')"
+rc_ikf=0
+( cd "$IKf" && "$MASSOH" intake 2>/dev/null ) || rc_ikf=$?
+after_bl_f="$(md5sum "$IKf/AGENT_BACKLOG.md" | awk '{print $1}')"
+after_mem_f="$(md5sum "$IKf/memory/MEMORY.md" | awk '{print $1}')"
+check "T-IK-f missing arg: exit non-zero" "[ $rc_ikf -ne 0 ]"
+check "T-IK-f missing arg: BACKLOG unchanged" "[ '$before_bl_f' = '$after_bl_f' ]"
+check "T-IK-f missing arg: MEMORY unchanged" "[ '$before_mem_f' = '$after_mem_f' ]"
+
+# T-IK-g — idempotent re-run: second run exits 0, no duplicate row.
+IKg="$TMP/ikg"; mkintakerepo "$IKg"
+( cd "$IKg" && "$MASSOH" intake "same idea twice" >/dev/null 2>&1 )
+rc_ikg2=0
+( cd "$IKg" && "$MASSOH" intake "same idea twice" >/dev/null 2>&1 ) || rc_ikg2=$?
+count_ikg="$(grep -c 'same idea twice' "$IKg/AGENT_BACKLOG.md" 2>/dev/null || echo 0)"
+check "T-IK-g second run exits 0 (idempotent)" "[ $rc_ikg2 -eq 0 ]"
+check "T-IK-g exactly one row with the idea (no duplicate)" "[ \"$count_ikg\" -eq 1 ]"
+
+# T-IK-h — priority assignment: P0 for bug, P1 for feature, P3 for neutral.
+IKh="$TMP/ikh"; mkintakerepo "$IKh"
+( cd "$IKh" && "$MASSOH" intake "fix critical bug" >/dev/null 2>&1 )
+( cd "$IKh" && "$MASSOH" intake "add new feature" >/dev/null 2>&1 )
+( cd "$IKh" && "$MASSOH" intake "someday maybe something" >/dev/null 2>&1 )
+check "T-IK-h P0 assigned for 'fix critical bug'" \
+  "grep 'fix critical bug' '$IKh/AGENT_BACKLOG.md' | grep -q 'P0'"
+check "T-IK-h P1 assigned for 'add new feature'" \
+  "grep 'add new feature' '$IKh/AGENT_BACKLOG.md' | grep -q 'P1'"
+check "T-IK-h P3 assigned for 'someday maybe something'" \
+  "grep 'someday maybe' '$IKh/AGENT_BACKLOG.md' | grep -q 'P3'"
+
+# T-IK-i — degrade on missing BACKLOG: exit 0, file created with idea row, no crash.
+IKi="$TMP/iki"; mkintakerepo "$IKi"
+rm -f "$IKi/AGENT_BACKLOG.md"
+rc_iki=0
+( cd "$IKi" && "$MASSOH" intake "fresh idea" >/dev/null 2>&1 ) || rc_iki=$?
+check "T-IK-i missing BACKLOG: exit 0 (degrade)" "[ $rc_iki -eq 0 ]"
+check "T-IK-i missing BACKLOG: file now exists" "[ -f '$IKi/AGENT_BACKLOG.md' ]"
+check "T-IK-i missing BACKLOG: idea row present" "grep -q 'fresh idea' '$IKi/AGENT_BACKLOG.md'"
+
+# T-IK-j — memory pointer written to memory/MEMORY.md.
+IKj="$TMP/ikj"; mkintakerepo "$IKj"
+( cd "$IKj" && "$MASSOH" intake "test memory pointer" >/dev/null 2>&1 )
+check "T-IK-j memory/MEMORY.md contains pointer to idea" \
+  "grep -q 'test memory pointer' '$IKj/memory/MEMORY.md'"
+
+# T-IK-k — non-Massoh-dir guard: no write outside Massoh project.
+IKk="$TMP/ikk_noproj"; mkdir -p "$IKk"
+( cd "$IKk" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t ) >/dev/null 2>&1
+# No .massoh, no agent-project/
+rc_ikk=0
+( cd "$IKk" && "$MASSOH" intake "should not be written" 2>/dev/null ) || rc_ikk=$?
+check "T-IK-k non-Massoh-dir: exit non-zero" "[ $rc_ikk -ne 0 ]"
+check "T-IK-k non-Massoh-dir: no AGENT_BACKLOG.md created" "[ ! -f '$IKk/AGENT_BACKLOG.md' ]"
+
+# T-IK-k (smoke dispatch — mirrors T-MB-g family)
+rc_tmb_intake=0
+( cd "$TMB_PROJ" && "$MASSOH" intake "smoke test idea" >/dev/null 2>&1 ) || rc_tmb_intake=$?
+check "T-IK-k smoke: intake dispatches from bin/massoh (exit 0)" "[ $rc_tmb_intake -eq 0 ]"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
