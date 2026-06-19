@@ -4,7 +4,7 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-19 (24h-queue — **10 SHIPPED v0.9→v0.17** (#7 RMT adopted: PR #25 proposal + #26 adoption; opt-in requirements traceability). #5 DEFERRED. Driving #11 schema-rename (→v0.18) → #12 bats (→v0.19, last). **Follow-up: T6 doctor update-check is network-flaky — fails in CI; needs hardening (offline-safe or CI-skip).**)
+Last updated: 2026-06-19 (24h-queue — **11 SHIPPED v0.9→v0.18** (#11 schema-rename merged PR #27). #5 DEFERRED. Last item **#12 bats** at arch-safety — note: bats NOT installed, suite = 483 checks, CI runs `bash test/run.sh`; arch-safety to weigh big-bang vs scoped vs defer (P3). **Follow-up: T6 network-flaky in CI.**)
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
@@ -97,6 +97,7 @@ on green; PRs reviewable post-hoc. See `AGENT_BACKLOG.md` §24h-plan.
 | 2026-06-19 | #7 RMT: arch/safety **APPROVED pending owner sign-off** — RG1–RG10; GAP-1 (manifest scripts/ entry needs bin/massoh cmd_install+cmd_doctor loop lockstep, else req-check declared-not-installed), GAP-2 (C07 req.get fix); target 434; new additive files safe, ADOPTION DIFF owner-gated. | architecture-safety |
 | 2026-06-19 | **Owner SIGNED OFF on all 3 remaining queue items** — #7 RMT (manifest.yml + bin/massoh install/doctor lockstep + policy 03/05/08/11 cross-links + VERSION 0.17.0), #11 schema-rename (manifest.yml version:→schema_version:), #12 bats (test/run.sh port). Drive serial #7→#11→#12; auto-merge-on-green; each still arch-safety+reviewer-qa gated. | owner |
 | 2026-06-19 | TASK-2026-06-19-rmt (#7): **APPROVE** — RG1–RG10 all independently verified (line refs in 06_review_result); 448/449 green (self-witnessed 3 runs); T6 "doctor flags update available" confirmed pre-existing on main (1/418 baseline); GAP-1 lockstep proven: `scripts` in both cmd_install+cmd_doctor loops, `ok agent-os/scripts` in live doctor; GAP-2 verified line 323 `req.get('id','<no-id>')`; additive-only confirmed per-file (0 deletions) for all 6 policy/doc files; 31/31 T-RMT assertions green; scope clean; AGENT_SYNC.md+AGENT_BACKLOG.md untouched; NB-1 req: row format (non-blocking); NB-2 T-RMT-i no-id sub-case not explicitly tested (non-blocking, fix verified by code inspection). | reviewer-qa |
+| 2026-06-19 | TASK-2026-06-19-schema-rename (#11): **APPROVE** — SR1–SR7 all independently verified (line refs in 06_review_result); 463/463 green (self-witnessed, T6 network-green in this env); fallback proven live: T-SR-4 synthetic old-manifest returns 1 + stderr `deprecated`; T-SR-5 neither-key returns `unknown` exit 0; inline-copy (test/run.sh SR_HELPER) byte-identical to bin/massoh lines 22–31; SR3 grep clean (zero `^version:` key readers); manifest↔bin lockstep (0 deletions in bin/massoh, 12 lines added — helper only); install/uninstall/block logic untouched; AGENT_SYNC.md+AGENT_BACKLOG.md untouched; owner sign-off on record (manifest.yml + bin/massoh, #11 named explicitly); scope: 6 files only; NB-1 inline-copy drift risk (non-blocking, copy correct today); NB-2 T-SR-10 tautology (non-blocking, matches spec). | reviewer-qa |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -122,40 +123,36 @@ None.
 | TASK-2026-06-19-board-renderer (#8) | merged | DONE — PR #23 → main, VERSION 0.15.0 |
 | TASK-2026-06-19-agentsmd (#10) | merged | DONE — PR #24 → main, VERSION 0.16.0 |
 | TASK-2026-06-19-rmt (#7) | 06_review_result | APPROVED — awaiting orchestrator merge → main (auto-merge-on-green) |
-| TASK-2026-06-19-schema-rename (#11) | backlog | BLOCKED — needs owner sign-off (manifest.yml safety-critical) |
+| TASK-2026-06-19-schema-rename (#11) | 06_review_result | APPROVED — awaiting orchestrator merge → main (auto-merge-on-green) |
 | TASK-2026-06-19-bats (#12) | backlog | QUEUED — last (rewrites test/run.sh) |
 
 ## Last handoff
 ```
 Agent: massoh-reviewer-qa
 Mode: REVIEW_QA
-Task: TASK-2026-06-19-rmt (#7) -- RMT adoption diff (v0.17.0)
+Task: TASK-2026-06-19-schema-rename (#11) -- manifest version: → schema_version: rename (v0.18.0)
 Status: APPROVED. 06_review_result.md written.
-Branch: feat/rmt (working tree, uncommitted)
-Decision: APPROVE. RG1-RG10 all independently verified. 448/449 green (self-witnessed 3 runs).
-  GAP-1: scripts in cmd_install loop (bin/massoh line 67) + cmd_doctor loop (line 148);
-          live doctor `ok agent-os/scripts`; req-check installed to scripts/ + skills/req-check/.
-  GAP-2: req-check line 323 `req.get('id','<no-id>')`. T-RMT-i passes (exit 1, C07, no KeyError).
-  RG2: yaml.safe_load only (lines 68, 120, 339). No yaml.load.
-  RG3: read-only confirmed (no write/makedirs/unlink/rename/truncate). T-RMT-m md5 unchanged.
-  RG4: ImportError block lines 48-52 exits 2 + install hint. T-RMT-l confirmed.
-  RG6: policy 14 §8 says "illustrative only". 0 elard strings in scripts/templates/skills.
-  RG7: additive-only — 0 deletions in all 6 policy/doc files (per-file git diff verified).
-  RG8: 31 T-RMT assertions in test/run.sh; all 31 green; 449 total > target 434.
-  RG9: VERSION=0.17.0; CHANGELOG [0.17.0] present; applied with manifest+bin.
-  RG10: owner sign-off AGENT_SYNC.md 2026-06-19 covers manifest.yml + bin/massoh for #7 RMT.
-  T6: "doctor flags update available" pre-existing on main (1/418 baseline). Not RMT-caused.
-  Scope: 20 files (12 additive, 3 additive-only policy edits, bin/massoh +2 tokens,
-         manifest.yml additive, test/run.sh +31, VERSION, CHANGELOG). AGENT_SYNC.md +
-         AGENT_BACKLOG.md untouched.
+Branch: feat/schema-rename (working tree, uncommitted)
+Decision: APPROVE. SR1–SR7 all independently verified. 463/463 green (self-witnessed, T6 green).
+  SR1: both manifest.yml + bin/massoh in same diff (atomic). git diff --stat confirms.
+  SR2: manifest_schema_ver() at bin/massoh lines 20–31; greps schema_version: first, falls
+       back to version: with stderr deprecation note, defaults ${v:-unknown}; all || true.
+  SR3: grep -rn "^version:" manifest.yml bin/ lib/ test/ templates/ → zero output. Clean.
+  SR4: manifest.yml line 2 comment = "# schema_version: 1". Line 8 key = "schema_version: 1".
+  SR5: CHANGELOG.md line 4 updated; CHARTER.md line 43 updated; manifest comment (SR4 same).
+  SR6: all grep/awk in manifest_schema_ver() guarded || true (bin/massoh lines 25, 27, 28).
+  SR7: mver() (line 17) reads VERSION file, unchanged. VERSION bumped for release only.
+  T-SR-4 fallback proven live: synthetic old manifest → 1 + stderr "deprecated" (green).
+  T-SR-5 neither-key proven live: output unknown, exit 0 (green).
+  Inline-copy: SR_HELPER (test/run.sh lines 3018–3027) byte-identical to bin/massoh lines 22–31.
+  T11i/T15l/T16r/T22b: capture-at-test-time pattern confirmed (no hardcoded checksums). All green.
+  Scope: 6 files only. install/uninstall/block logic untouched. AGENT_SYNC.md + AGENT_BACKLOG.md untouched.
 Non-blocking:
-  NB-1: 11_TASK_PACKET_SPEC.md req: row appears as standalone file-table row (awkward format
-         but additive, accurate, unambiguous).
-  NB-2: T-RMT-i does not explicitly test no-id + flag sub-case; code fix confirmed correct
-         by inspection (line 323); spec did not require that sub-test.
-Next recommended agent: orchestrator (auto-merge feat/rmt per auto-merge-on-green policy)
-Next action: orchestrator squash-merges feat/rmt PR -> main; VERSION 0.17.0 shipped;
-             schema-rename (#11) unblocked next
+  NB-1: Inline-copy drift risk — SR_HELPER correct today; recommend cross-ref comment in future.
+  NB-2: T-SR-10 tautology (before/after in back-to-back lines); non-harmful, matches spec.
+Next recommended agent: orchestrator (auto-merge feat/schema-rename per auto-merge-on-green policy)
+Next action: orchestrator squash-merges feat/schema-rename PR → main; VERSION 0.18.0 shipped;
+             bats (#12, last queue item) unblocked next.
 ```
 
 ## [meta-engineer] 2026-06-19 — RMT proposal (TASK-2026-06-19-rmt)
