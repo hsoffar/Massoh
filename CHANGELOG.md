@@ -11,6 +11,37 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.10.0] - 2026-06-19
+### Added
+- **`massoh board --push plane`** — push Massoh's file-based task state to a Plane kanban board
+  (push-only; Plane is a read-only mirror). First credential + outbound-network surface in Massoh.
+  - **Internal task model**: scans `.agent_tasks/TASK-*/`, derives `{task-id, title, description,
+    stage, priority, last-agent, blocked, cost_tokens}` per task. Stage = highest packet file
+    present (backlog / scoping / arch-safety / licensed / implementing / review / merged).
+  - **Plane upsert**: POST to create (first run) → PATCH to update (subsequent runs). Idempotent
+    via an append-only local id-map `.agent_tasks/.board-map.tsv`.
+  - **Plane states**: ensures the 7 stage states exist in the project (check-before-create;
+    idempotent; never duplicates a state).
+  - **`massoh board --init-config`**: creates `.env.massoh` template (secret config; gitignored,
+    create-if-missing) and `agent-project/board.conf` (non-secret slugs; committable).
+  - **`massoh board --no-push`** / bare `massoh board`: prints task table, zero API calls.
+  - **`massoh board --dry-run`**: prints what would be pushed, zero writes.
+  - **Secret discipline (BG1–BG7)**: `PLANE_API_TOKEN` never written to any tracked file, never
+    printed or logged, passed to Plane via `X-API-Key` header only. `.env.massoh` and
+    `.agent_tasks/.board-map.tsv` added to `.gitignore` before any write (idempotent).
+  - **Network discipline (BG8–BG15)**: `--connect-timeout 10 --max-time 30` on every curl; non-2xx
+    → warn + skip + continue + exit 0; map row written only on confirmed 2xx; HTTPS enforced
+    (reject `http://` unless `PLANE_ALLOW_HTTP=1`).
+  - **`jq` startup guard (BG22)**: exits 1 with install instructions if jq is absent; jq confined
+    to `cmd_board` only (no other verb gains a jq dependency).
+  - **Adapter isolation**: model-building (`_board_build_model`) is separate from the push adapter
+    (`_board_push_plane`); future `--push github` / `--push linear` adapters can be added without
+    touching model code.
+  - **`manifest.yml`** updated lockstep: `agent-project/board.conf` added to `project_scaffold`.
+  - Plane REST API used per current docs (fetched from `makeplane/developer-docs` branch
+    `feat/add-new-api-docs`, 2026-06-19). Auth: `X-API-Key` header.
+  - POSIX bash, `set -euo pipefail`, zero LLM, zero Anthropic API calls.
+
 ## [0.9.0] - 2026-06-19
 ### Added
 - **`massoh gate on` / `massoh gate off`** — per-repo, opt-in license-to-code gate that

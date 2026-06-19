@@ -52,3 +52,8 @@ project_scaffold:
     - { dest: .github/workflows/massoh-gate.yml, source: templates/massoh-gate.yml }
     # templates/massoh-pre-push is used by `massoh gate on` to install/append the hook content
     # into .git/hooks/pre-push; it is not scaffolded as a tracked project file.
+    # Board config — non-secret; created by `massoh board --init-config` (create-if-missing only):
+    - { dest: agent-project/board.conf, source: null }
+    # NOTE: .env.massoh and .agent_tasks/.board-map.tsv are runtime artifacts managed by
+    # `massoh board` at run time — they are intentionally NOT listed here (never installed
+    # by `massoh on`; gitignored by the verb before any write).
