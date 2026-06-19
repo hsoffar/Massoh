@@ -4,22 +4,22 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-19 (TASK-2026-06-19-massoh-board — owner SIGNED OFF on bin/massoh + manifest.yml; arch-safety CONDITIONAL YES, 26 conditions BG1–BG26; `04` issued; routed to massoh-implementer, target VERSION 0.10.0)
+Last updated: 2026-06-19 (TASK-2026-06-19-massoh-board — **MERGED** PR #17 → main `ce831e2`, VERSION 0.10.0. Now driving 24h queue #3: modularize bin/massoh → lib/verbs (arch-safety APPROVED, MB1–MB8); unblocked by the merge.)
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**TASK-2026-06-19-massoh-board** — **LICENSED, IN IMPLEMENTATION**. Owner signed off on `bin/massoh`
-+ `manifest.yml` (Massoh's first credential + outbound-network surface); arch-safety CONDITIONAL YES
-with 26 conditions BG1–BG26; `04_implementation_packet.md` issued. Implementer building
-`massoh board --push plane` on `feat/massoh-board`: internal task model → Plane issue upsert,
-append-only `.board-map.tsv`, secret discipline (BG1–BG7), network degrade (BG8–BG15), jq guard.
-Must deliver T17–T23 (suite 236 → ≥263 green). Routed to `massoh-implementer`.
+**TASK-2026-06-19-modularize-bin** (24h queue #3) — **LICENSED, IN IMPLEMENTATION**. Extract the 12
+feature verbs from `bin/massoh` → `lib/verbs/*.sh` (pure extraction, byte-identical CLI). Arch-safety
+APPROVED (MB1–MB8; safety-critical install/uninstall/block core STAYS in `bin/massoh`); owner
+batch-authorized. Implementing on `feat/modularize-bin`; must keep suite green (target 287) + prove
+byte-identical output. Highest risk MB2 = installed-layout sourcing (`$MASSOH_HOME` only). Routed to
+`massoh-implementer`.
 
-**Last shipped:** TASK-2026-06-19-license-gate — `massoh gate on/off` mechanical license-to-code
-enforcement. **Merged PR #16 → `fc6dc0d`, VERSION 0.9.0**, 236/236 green, G1–G14 verified.
+**Last shipped:** TASK-2026-06-19-massoh-board — `massoh board --push plane` (first credential +
+network surface). **Merged PR #17 → `ce831e2`, VERSION 0.10.0**, 280/280 green, BG1–BG26 verified.
 
 ## Open questions (owner decision needed)
 | Question | Raised | Context |
@@ -73,6 +73,12 @@ enforcement. **Merged PR #16 → `fc6dc0d`, VERSION 0.9.0**, 236/236 green, G1�
 | 2026-06-19 | TASK-2026-06-19-massoh-board: **Owner SIGNED OFF** on editing `bin/massoh` + `manifest.yml` (first credential + outbound-network surface; reviewed 26 conditions BG1–BG26 + 27 tests T17–T23) → `04_implementation_packet.md` issued; route to massoh-implementer | owner |
 | 2026-06-19 | TASK-2026-06-19-license-gate: **MERGED** (squash) PR #16 → main `fc6dc0d`; VERSION 0.9.0 shipped; board now unblocked. Deploy to `~/.claude` via `massoh update` when owner chooses | owner |
 | 2026-06-19 | Backlog additions: **RMT** (requirements traceability, PROPOSE-ONLY engine capability) + **Fleet layer** (multi-repo dashboard + cross-repo lessons + self-curing engine, EPIC) captured to AGENT_BACKLOG/NOW_NEXT + briefs under `agent-project/briefs/` | owner |
+| 2026-06-19 | TASK-2026-06-19-massoh-board: **IMPLEMENTED** — cmd_board in bin/massoh (lines 1122–1619); _board_push_plane adapter; append-only .board-map.tsv; secret discipline BG1–BG7; network degrade BG8–BG15; jq guard BG22; manifest lockstep BG21/BG24; 280/280 green (44 new T17–T23 checks); VERSION 0.10.0; Plane API source: makeplane/developer-docs feat/add-new-api-docs; routing to massoh-reviewer-qa | implementer |
+| 2026-06-19 | TASK-2026-06-19-massoh-board: **REQUEST CHANGES** — BG1–BG26 independently verified (line refs in 06_review_result); 280/280 green (independently run); T17b live-pass confirmed; 1 blocking: AGENT_BACKLOG.md edited out-of-scope + 3 Done rows deleted (NON_NEGOTIABLES append-only violation). Fix: `git checkout HEAD -- AGENT_BACKLOG.md`. Re-route to massoh-reviewer-qa (fast-track). | reviewer-qa |
+| 2026-06-19 | TASK-2026-06-19-massoh-board: **APPROVED** (fast-track re-review) — prior BLOCK-1 resolved: board commit `5fb1788` has 7 approved files only (AGENT_BACKLOG.md absent); working-tree AGENT_BACKLOG.md restored all 3 deleted Done rows verbatim; bin/massoh additive (500 ins/1 del); BG1–BG26/280 green/T17b carried from prior full review. Ready to merge. | reviewer-qa |
+| 2026-06-19 | **Owner BATCH-AUTHORIZED `bin/massoh` edits for the 24h queue** — items #3 (modularize), #4 (intake), #5 (auto-ledger hook), #6 (fleet rollup), #8 (board renderer), #9 (profiles), #10 (AGENTS.md), #11 (schema_version). Standing sign-off; per-item arch-safety + reviewer-qa + green tests still required; PRs left OPEN for owner merge (no auto-merge). Does NOT cover other safety-critical files (manifest install/uninstall/block logic, NON_NEGOTIABLES, global-block) — those still need fresh per-change sign-off. Revocable any time. | owner |
+| 2026-06-19 | TASK-2026-06-19-modularize-bin: arch/safety **APPROVED** — 8 conditions MB1–MB8 (MB1: symlink-safe sourcing via $MASSOH_HOME; MB2: install wires lib/verbs/ + manifest lockstep; MB3: loud-fail on missing lib file; MB4: doctor verifies lib/verbs/; MB5: byte-identical CLI output; MB6: pure extraction no logic change; MB7: helpers defined before verbs; MB8: 280/280 suite green); test target 287 (7 new T-MB-* checks); single highest risk = installed-layout sourcing path (MB2); recommended split: keep safety-critical install/uninstall/block/on/off/status/doctor in bin/massoh (~340 lines), extract 12 verb units to lib/verbs/ (~1320 lines); impl BLOCKED until feat/massoh-board merges to main; route to massoh-implementer after board merge | architecture-safety |
+| 2026-06-19 | TASK-2026-06-19-massoh-board: **MERGED** (squash) PR #17 → main `ce831e2`; VERSION 0.10.0; modularize (#3) unblocked. Deploy to `~/.claude` via `massoh update` when owner chooses | owner |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -88,25 +94,26 @@ None.
 | TASK-2026-06-17-massoh-ledger | merged | DONE — PR #14 |
 | TASK-2026-06-17-massoh-meta | merged | DONE — PR #15 → `be97ed0` |
 | TASK-2026-06-19-license-gate | merged | DONE — PR #16 → main `fc6dc0d`, VERSION 0.9.0 |
-| TASK-2026-06-19-massoh-board | 04_implementation_packet | LICENSED — owner signed off; implementer building (BG1–BG26, T17–T23) |
+| TASK-2026-06-19-massoh-board | merged | DONE — PR #17 → main `ce831e2`, VERSION 0.10.0 |
+| TASK-2026-06-19-modularize-bin | 04_implementation_packet | LICENSED (batch-auth) — implementer building lib/verbs (MB1–MB8) |
+| TASK-2026-06-19-modularize-bin | 03_architecture_safety | APPROVED — 8 conditions MB1–MB8; test target 287; BLOCKED until board #1 merges; route to massoh-implementer |
 
 ## Last handoff
 ```
 Agent: massoh-reviewer-qa
-Mode: REVIEW_QA
-Task: TASK-2026-06-19-license-gate — license-to-code gate enforcement
-Status: DONE. Decision = APPROVE. 06_review_result.md written.
-Branch: feat/license-gate
-Decision: APPROVE — G1–G14 all independently verified; 236/236 green (independently run);
-  scope clean (deferred items absent); safety-critical files untouched by existing verbs;
-  two non-blocking documentation notes (NB-1 manifest ambiguity, NB-2 T16n variable naming).
-Files changed: AGENT_SYNC.md (markdown), .agent_tasks/TASK-2026-06-19-license-gate/06_review_result.md (new).
-Tests run: 236/236 green (bash test/run.sh — independently executed).
-Risks: none blocking. NB-1: manifest.yml lists massoh-gate.yml under create_if_missing with
-  comment; no runtime impact (cmd_on does not parse YAML). NB-2: T16n variable naming misleading
-  (G16n_nogit is actually a git repo); assertions correct, no test bug.
-Blocked by: nothing.
-Next recommended agent: owner (PR open + merge)
-Next action: owner opens PR for feat/license-gate → main, reviews 06_review_result.md,
-  merges. massoh-board task (TASK-2026-06-19-massoh-board) unblocked after merge.
+Mode: REVIEW_QA (fast-track re-review)
+Task: TASK-2026-06-19-massoh-board — massoh board --push plane (v0.10.0)
+Status: APPROVED. 06_review_result.md fast-track addendum written.
+Branch: feat/massoh-board
+Decision: APPROVED. Prior BLOCK-1 (AGENT_BACKLOG.md Done-row deletion + scope creep) resolved.
+  Board commit 5fb1788 is scope-clean (7 files, no AGENT_BACKLOG.md). Working-tree AGENT_BACKLOG.md
+  restored all 3 deleted Done rows under a preserved-verbatim subheader. bin/massoh additive only
+  (500 ins / 1 del). BG1–BG26 / 280/280 / T17b live-pass carried from the prior full review.
+Checks run:
+  git show --stat 5fb1788 — 7 files, no AGENT_BACKLOG.md. PASS.
+  git diff origin/main..5fb1788 -- AGENT_BACKLOG.md — empty. PASS.
+  git diff origin/main -- AGENT_BACKLOG.md — 3 Done rows present under preserved-verbatim header. PASS.
+  git diff --stat origin/main..5fb1788 -- bin/massoh — 500 ins / 1 del. PASS.
+Next recommended agent: owner (merge feat/massoh-board → main; deploy via massoh update)
+Next action: owner merges PR on feat/massoh-board; routes to TASK-2026-06-19-modularize-bin
 ```

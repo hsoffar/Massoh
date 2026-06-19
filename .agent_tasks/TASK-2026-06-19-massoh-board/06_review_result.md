@@ -187,3 +187,25 @@ None. The fix is unambiguous and mechanical. No policy exception is needed.
 After the AGENT_BACKLOG.md revert, this implementation should receive APPROVE. All 26 BG conditions are independently verified with line references. The test suite is real (not stub-only), T17b is a live token-suppression assertion, the mock servers in T18–T20 exercise real network paths, and the safety-critical file checksums are guarded by T22a/T22b. The core feature — `massoh board --push plane` — is correctly implemented, secret-safe, network-safe, and scope-clean.
 
 **Decision requested:** Implementer reverts AGENT_BACKLOG.md, re-routes to massoh-reviewer-qa for APPROVE confirmation (fast-track: single-file revert, all BG conditions already verified).
+
+---
+
+## Fast-track re-review — 2026-06-19
+
+**Verdict: APPROVED**
+
+Prior full review verified BG1–BG26, ran 280/280 suite, live-passed T17b. This re-review checked only the single prior blocker (BLOCK-1).
+
+### Check results
+
+**Check 1 — Board commit file scope (`git show --stat 5fb1788`):**
+PASS. Commit `5fb1788` touches exactly 7 files: `.agent_tasks/TASK-2026-06-19-massoh-board/05_implementation_handoff.md`, `.agent_tasks/TASK-2026-06-19-massoh-board/06_review_result.md`, `CHANGELOG.md`, `VERSION`, `bin/massoh`, `manifest.yml`, `test/run.sh`. `AGENT_BACKLOG.md` is NOT present. Scope clean.
+
+**Check 2 — Board commit does not touch `AGENT_BACKLOG.md` (`git diff origin/main..5fb1788 -- AGENT_BACKLOG.md`):**
+PASS. Output is empty. The board commit has zero impact on `AGENT_BACKLOG.md`.
+
+**Check 3 — Append-only: no Done row deleted in working-tree `AGENT_BACKLOG.md` (`git diff origin/main -- AGENT_BACKLOG.md`):**
+PASS. The diff shows the 3 originally blocked Done rows (`v0.4 cadence ceremonies`, `massoh cron`, `Version stamp`) are all present under the `### — earlier granular rows (preserved verbatim; append-only, never delete) —` subheader. No `-` line removes any pre-existing Done table row. The NON_NEGOTIABLES append-only requirement is satisfied. The backlog change is a separate governance commit (not part of `5fb1788`), restored all deleted rows, and is out of band from the board PR.
+
+**Check 4 — `bin/massoh` additive (`git diff --stat origin/main..5fb1788 -- bin/massoh`):**
+PASS. `1 file changed, 500 insertions(+), 1 deletion(-)`. The single deletion is the `*)` usage die-line that was extended to include `board` in the verb list — consistent with the prior review finding of exactly 2 diff hunks (verb insertion + dispatch addition). Additive confirmed.
