@@ -1770,7 +1770,7 @@ check "T-MB-e missing lib file: stderr contains 'missing lib file'" \
 
 # T-MB-f: byte-identical output — invoke massoh <unknown-verb> before and after; diff must be empty.
 # Confirms MB5: non-dynamic output (die() usage line) is byte-identical after extraction.
-tmb_f_before="massoh: unknown command 'unknownverb'. verbs: install update on off enable disable status doctor discover review standup plan learn recommend ledger meta cron gate board intake fleet version work uninstall [--link]"
+tmb_f_before="massoh: unknown command 'unknownverb'. verbs: install update on off enable disable status doctor discover review standup plan learn recommend ledger meta cron gate board intake fleet agents-md version work uninstall [--link]"
 tmb_f_after="$("$MASSOH" unknownverb 2>&1 || true)"
 check "T-MB-f byte-identical unknown-verb die() output" \
   "[ '$tmb_f_before' = '$tmb_f_after' ]"
@@ -2334,6 +2334,181 @@ rc_br12=0
 check "T-BR-12 --local exits 0 with zero TASK-* dirs" "[ $rc_br12 -eq 0 ]"
 check "T-BR-12 board.html created (empty board)" "[ -f '$BRR12/agent-project/board.html' ]"
 check "T-BR-12 BOARD.md created (empty board)"   "[ -f '$BRR12/agent-project/BOARD.md' ]"
+
+# ============================================================================
+# T-AM: massoh agents-md — emit AGENTS.md from role frontmatter (AM1–AM10)
+# ============================================================================
+echo "== T-AM: agents-md =="
+
+# Helper: init a mock MASSOH_HOME dir (with lib/verbs/ symlinked from real repo so bin/massoh
+# sources correctly) and optionally create the claude/agents/ directory.
+# Usage: mk_am_home <dir>
+mk_am_home() {
+  local dir="$1"
+  mkdir -p "$dir/claude/agents" "$dir/lib"
+  # AM1 / sourcing: bin/massoh sources $MASSOH_HOME/lib/verbs/*.sh — symlink real lib/verbs/
+  ln -s "$REPO_ROOT/lib/verbs" "$dir/lib/verbs"
+}
+
+# Helper: create a minimal mock role file with given name, description, tools.
+# Usage: mk_role <dir> <filename> <name> <description> <tools>
+mk_role() {
+  local dir="$1" fname="$2" rname="$3" rdesc="$4" rtools="$5"
+  mkdir -p "$dir/claude/agents"
+  cat > "$dir/claude/agents/$fname" <<ROLEEOF
+---
+name: $rname
+description: $rdesc
+tools: $rtools
+model: sonnet
+---
+You are the role body. This content must NOT appear in AGENTS.md.
+You are the navigator.
+ROLEEOF
+}
+
+# Helper: create a temp git repo for agents-md tests.
+mk_am_repo() {
+  local d="$1"
+  mkdir -p "$d"
+  ( cd "$d" && git init -q && git config user.email t@t && git config user.name t )
+}
+
+# --- T-AM-a: generated with 7 role files; sentinel on line 1; 7 rows; concise ---
+RVa="$TMP/am_a_home_$$"
+RRa="$TMP/am_a_repo_$$"
+mk_am_home "$RVa"
+mk_am_repo "$RRa"
+for i in 1 2 3 4 5 6 7; do
+  mk_role "$RVa" "massoh-role${i}.md" "role-${i}" "Description for role ${i}" "Read, Grep"
+done
+rc_ama=0
+( cd "$RRa" && MASSOH_HOME="$RVa" "$MASSOH" agents-md >/dev/null 2>&1 ) || rc_ama=$?
+check "T-AM-a exits 0" "[ $rc_ama -eq 0 ]"
+check "T-AM-a AGENTS.md created" "[ -f '$RRa/AGENTS.md' ]"
+check "T-AM-a sentinel on line 1" \
+  "head -n1 '$RRa/AGENTS.md' | grep -qF '<!-- massoh-generated -->'"
+check "T-AM-a exactly 7 data rows (pipes in table)" \
+  "[ \"\$(grep -c '^| role-' '$RRa/AGENTS.md')\" -eq 7 ]"
+check "T-AM-a line count < 30 (no body dump)" \
+  "[ \"\$(wc -l < '$RRa/AGENTS.md')\" -lt 30 ]"
+
+# --- T-AM-b: idempotent on second run; sentinel appears exactly once ---
+md5_amb_1="$(md5sum "$RRa/AGENTS.md" | awk '{print $1}')"
+rc_amb=0
+( cd "$RRa" && MASSOH_HOME="$RVa" "$MASSOH" agents-md >/dev/null 2>&1 ) || rc_amb=$?
+md5_amb_2="$(md5sum "$RRa/AGENTS.md" | awk '{print $1}')"
+check "T-AM-b second run exits 0" "[ $rc_amb -eq 0 ]"
+check "T-AM-b byte-identical on re-run" "[ '$md5_amb_1' = '$md5_amb_2' ]"
+check "T-AM-b sentinel appears exactly once" \
+  "[ \"\$(grep -c '<!-- massoh-generated -->' '$RRa/AGENTS.md')\" -eq 1 ]"
+
+# --- T-AM-c: hand-authored AGENTS.md (no sentinel) → refused, exit 1, file unchanged ---
+RVc="$TMP/am_c_home_$$"
+RRc="$TMP/am_c_repo_$$"
+mk_am_home "$RVc"
+mk_am_repo "$RRc"
+mk_role "$RVc" "massoh-role1.md" "role-1" "Desc one" "Read"
+printf '# My custom agents\nhand-authored\n' > "$RRc/AGENTS.md"
+md5_amc_before="$(md5sum "$RRc/AGENTS.md" | awk '{print $1}')"
+rc_amc=0
+( cd "$RRc" && MASSOH_HOME="$RVc" "$MASSOH" agents-md >/dev/null 2>&1 ) || rc_amc=$?
+md5_amc_after="$(md5sum "$RRc/AGENTS.md" | awk '{print $1}')"
+check "T-AM-c hand-authored refused: exit non-zero" "[ $rc_amc -ne 0 ]"
+check "T-AM-c hand-authored: file content unchanged" "[ '$md5_amc_before' = '$md5_amc_after' ]"
+check "T-AM-c hand-authored: stderr mentions sentinel/generated" \
+  "( cd '$RRc' && MASSOH_HOME='$RVc' '$MASSOH' agents-md 2>&1 || true ) | grep -qiE 'sentinel|generated'"
+
+# --- T-AM-d: pipe sanitization in description cell ---
+RVd="$TMP/am_d_home_$$"
+RRd="$TMP/am_d_repo_$$"
+mk_am_home "$RVd"
+mk_am_repo "$RRd"
+mk_role "$RVd" "massoh-role1.md" "role-one" "a pipe | here and another | pipe" "Read"
+rc_amd=0
+( cd "$RRd" && MASSOH_HOME="$RVd" "$MASSOH" agents-md >/dev/null 2>&1 ) || rc_amd=$?
+check "T-AM-d exits 0" "[ $rc_amd -eq 0 ]"
+check "T-AM-d raw pipe not in description cell" \
+  "[ -f '$RRd/AGENTS.md' ] && ! grep -qF 'a pipe | here' '$RRd/AGENTS.md'"
+
+# --- T-AM-e: degrade exit 0 when no role files found; no AGENTS.md created ---
+RVe="$TMP/am_e_home_$$"
+RRe="$TMP/am_e_repo_$$"
+mk_am_home "$RVe"  # creates claude/agents/ (empty — no massoh-*.md files) + symlinks lib/verbs
+mk_am_repo "$RRe"
+rc_ame=0
+out_ame=""
+out_ame="$( ( cd "$RRe" && MASSOH_HOME="$RVe" "$MASSOH" agents-md 2>&1 ) || rc_ame=$? )"
+check "T-AM-e degrade exits 0" "[ $rc_ame -eq 0 ]"
+check "T-AM-e message about no role files" \
+  "printf '%s' '$out_ame' | grep -qi 'no role files'"
+check "T-AM-e AGENTS.md NOT created on degrade" "[ ! -f '$RRe/AGENTS.md' ]"
+
+# --- T-AM-f: static grep — no source/eval, no network, no secrets ---
+check "T-AM-f no source/eval/bash-c in agents_md.sh" \
+  "[ \"\$(grep -vE '^\s*#' '$REPO_ROOT/lib/verbs/agents_md.sh' | grep -E '\bsource\b|\beval\b|bash -c' | wc -l)\" -eq 0 ]"
+check "T-AM-f no curl/wget/nc/ssh/gh in agents_md.sh" \
+  "[ \"\$(grep -iE 'curl|wget|\bnc\b|ssh |gh ' '$REPO_ROOT/lib/verbs/agents_md.sh' | wc -l)\" -eq 0 ]"
+check "T-AM-f no TOKEN/SECRET/KEY/PASSWORD/CREDENTIAL in agents_md.sh" \
+  "[ \"\$(grep -iE 'TOKEN|SECRET|KEY|PASSWORD|CREDENTIAL' '$REPO_ROOT/lib/verbs/agents_md.sh' | grep -v '^\s*#' | wc -l)\" -eq 0 ]"
+
+# --- T-AM-g: description field capped at ~260 chars (256 + ...) ---
+RVg="$TMP/am_g_home_$$"
+RRg="$TMP/am_g_repo_$$"
+mk_am_home "$RVg"
+mk_am_repo "$RRg"
+long_desc="$(python3 -c 'print("x" * 500)' 2>/dev/null || printf '%0.s12345678901234567890' {1..25})"
+mk_role "$RVg" "massoh-role1.md" "role-long" "$long_desc" "Read"
+rc_amg=0
+( cd "$RRg" && MASSOH_HOME="$RVg" "$MASSOH" agents-md >/dev/null 2>&1 ) || rc_amg=$?
+check "T-AM-g exits 0 with long description" "[ $rc_amg -eq 0 ]"
+check "T-AM-g description cell at most ~260 chars" \
+  "[ \"\$(grep '^| role-long' '$RRg/AGENTS.md' | awk -F'|' '{print \$3}' | wc -c)\" -le 265 ]"
+
+# --- T-AM-h: edits code? column derived from tools field ---
+RVh="$TMP/am_h_home_$$"
+RRh="$TMP/am_h_repo_$$"
+mk_am_home "$RVh"
+mk_am_repo "$RRh"
+mk_role "$RVh" "massoh-editor.md"   "role-editor"   "Edits files"  "Read, Grep, Edit"
+mk_role "$RVh" "massoh-readonly.md" "role-readonly"  "Read only"    "Read, Grep"
+rc_amh=0
+( cd "$RRh" && MASSOH_HOME="$RVh" "$MASSOH" agents-md >/dev/null 2>&1 ) || rc_amh=$?
+check "T-AM-h exits 0" "[ $rc_amh -eq 0 ]"
+check "T-AM-h Edit tools role shows yes" \
+  "grep '^| role-editor' '$RRh/AGENTS.md' | grep -q '| yes |'"
+check "T-AM-h no-Edit tools role shows no" \
+  "grep '^| role-readonly' '$RRh/AGENTS.md' | grep -q '| no |'"
+
+# --- T-AM-i: dispatch + usage registration ---
+RVi="$TMP/am_i_home_$$"
+RRi="$TMP/am_i_repo_$$"
+mk_am_home "$RVi"
+mk_am_repo "$RRi"
+# dispatch: agents-md must not fall through to "unknown command"
+rc_ami_dispatch=0
+( cd "$RRi" && MASSOH_HOME="$RVi" "$MASSOH" agents-md >/dev/null 2>&1 ) || rc_ami_dispatch=$?
+check "T-AM-i dispatch recognized (not unknown-command)" \
+  "[ $rc_ami_dispatch -eq 0 ]"
+# usage: bogus verb → usage string must mention agents-md
+check "T-AM-i agents-md in usage string" \
+  "( MASSOH_HOME='$RVi' '$MASSOH' bogus_verb_amtest_$$ 2>&1 || true ) | grep -q 'agents-md'"
+
+# --- T-AM-j: scope guard — < 50 lines; "You are the" absent ---
+RVj="$TMP/am_j_home_$$"
+RRj="$TMP/am_j_repo_$$"
+mk_am_home "$RVj"
+mk_am_repo "$RRj"
+for i in 1 2 3 4 5 6 7; do
+  mk_role "$RVj" "massoh-role${i}.md" "role-${i}" "Description ${i}" "Read, Write"
+done
+rc_amj=0
+( cd "$RRj" && MASSOH_HOME="$RVj" "$MASSOH" agents-md >/dev/null 2>&1 ) || rc_amj=$?
+check "T-AM-j exits 0" "[ $rc_amj -eq 0 ]"
+check "T-AM-j AGENTS.md < 50 lines" \
+  "[ \"\$(wc -l < '$RRj/AGENTS.md')\" -lt 50 ]"
+check "T-AM-j 'You are the' absent from AGENTS.md" \
+  "! grep -qF 'You are the' '$RRj/AGENTS.md'"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
