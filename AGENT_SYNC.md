@@ -4,7 +4,7 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-19 (24h-queue fan-out — **9 SHIPPED v0.9→v0.16** (license-gate, board, modularize, CI, intake, fleet, profiles #22, renderer #23, agents-md #24) + #5 DEFERRED. Remaining: **#7 RMT** (starting, via meta-engineer), **#11 schema** (BLOCKED — needs owner sign-off on manifest.yml), **#12 bats** (last). Follow-up: verb load-order NB-1.)
+Last updated: 2026-06-19 (24h-queue fan-out — **9 SHIPPED v0.9→v0.16** (license-gate, board, modularize, CI, intake, fleet, profiles #22, renderer #23, agents-md #24) + #5 DEFERRED. Remaining: **#7 RMT** (proposal drafted by meta-engineer on feat/rmt — awaiting arch-safety + owner sign-off on manifest), **#11 schema** (BLOCKED — needs owner sign-off on manifest.yml), **#12 bats** (last). Follow-up: verb load-order NB-1.)
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
@@ -117,7 +117,7 @@ None.
 | TASK-2026-06-19-profiles (#9) | merged | DONE — PR #22 → main, VERSION 0.14.0 |
 | TASK-2026-06-19-board-renderer (#8) | merged | DONE — PR #23 → main, VERSION 0.15.0 |
 | TASK-2026-06-19-agentsmd (#10) | merged | DONE — PR #24 → main, VERSION 0.16.0 |
-| TASK-2026-06-19-rmt (#7) | 00_request | NEXT — RMT engine capability (PROPOSE-ONLY via meta-engineer) |
+| TASK-2026-06-19-rmt (#7) | 05_proposal | IN PROGRESS — RMT proposal drafted; awaiting arch-safety + owner sign-off on manifest |
 | TASK-2026-06-19-schema-rename (#11) | backlog | BLOCKED — needs owner sign-off (manifest.yml safety-critical) |
 | TASK-2026-06-19-bats (#12) | backlog | QUEUED — last (rewrites test/run.sh) |
 
@@ -151,4 +151,37 @@ Non-blocking:
         product code protection is correct -- false positives in grep method only.
 Next recommended agent: orchestrator (auto-merge feat/agentsmd per auto-merge-on-green policy)
 Next action: orchestrator squash-merges feat/agentsmd PR -> main; VERSION 0.16.0 shipped
+```
+
+## [meta-engineer] 2026-06-19 — RMT proposal (TASK-2026-06-19-rmt)
+
+```
+Agent: massoh-meta-engineer
+Mode: PROPOSE-ONLY (engine-upgrade proposal)
+Task: TASK-2026-06-19-rmt — Requirements Management & Traceability
+Task packet: .agent_tasks/TASK-2026-06-19-rmt/05_proposal.md
+Status: Proposal complete. Five new additive files written on feat/rmt.
+        No existing file modified. Dormant by default. Project-agnostic.
+
+Decision: Filed RMT as an opt-in engine capability with:
+  - policy/14_REQUIREMENTS_TRACEABILITY.md (schema, validator contract, safety guard,
+    append-only rule, adoption steps, elard worked-example)
+  - templates/requirements.registry.template.yml
+  - templates/requirements.config.template.yml
+  - scripts/req-check (Python stdlib + PyYAML; 12 checks; config-driven)
+  - claude/skills/req-check/SKILL.md
+  ADOPTION DIFF (owner-gated) documented in 05_proposal.md §5:
+  manifest.yml, policies 03/05/08/11, OPERATING_SYSTEM.md, CLAUDE.project.template.md,
+  VERSION (0.16.0 → 0.17.0), CHANGELOG.
+
+Files changed: 6 new files (feat/rmt branch)
+Tests run: n/a (PROPOSE-ONLY; no code execution required)
+Risks: PyYAML dep scoped to adopting projects' CI only; engine bash CLI unaffected.
+       manifest.yml wiring is owner-gated (safety-critical); not applied here.
+Blocked by: owner sign-off on manifest.yml + arch-safety review of policy 14
+
+Next recommended agent: massoh-architecture-safety (review policy 14 schema,
+  validator contract C01–C12, PyYAML dep note, append-only + safety guard)
+Next action: owner reviews 05_proposal.md §5 ADOPTION DIFF, then routes to
+  massoh-architecture-safety for policy 14 sign-off
 ```
