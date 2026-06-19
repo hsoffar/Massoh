@@ -50,3 +50,7 @@ Classify every task as exactly one: `PRODUCT_SCOPE` · `UX_REVIEW` · `ARCHITECT
 
 ## Skills
 `/start-task <request>` · `/sync` · `/close-task <id>` · `/history-cleanup`.
+
+## Optional capabilities
+- **RMT** (requirements registry + CI validator): see
+  `~/.claude/agent-os/policies/14_REQUIREMENTS_TRACEABILITY.md` to opt in.

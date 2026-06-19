@@ -20,6 +20,11 @@ or knowledge drift. The system guarantees:
 5. Agents stay synchronized (`AGENT_SYNC.md` dashboard + handoffs).
 6. Old/duplicated history gets cleaned, not hoarded (History Maintainer).
 
+**Optional capability — RMT:** projects may opt into Requirements Management &
+Traceability (`agent-os/policies/14_REQUIREMENTS_TRACEABILITY.md`) by adding
+`agent-project/requirements.config.yml` + `requirements/registry.yml`. Absent
+files = no-op.
+
 ## 2. Starting a session
 
 1. Claude reads `CLAUDE.md` automatically → follows the boot sequence.

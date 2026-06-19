@@ -2510,6 +2510,494 @@ check "T-AM-j AGENTS.md < 50 lines" \
 check "T-AM-j 'You are the' absent from AGENTS.md" \
   "! grep -qF 'You are the' '$RRj/AGENTS.md'"
 
+echo "== T-RMT: req-check validator =="
+
+REQ_CHECK="$REPO_ROOT/scripts/req-check"
+
+# Helper: create a minimal RMT fixture (config + registry) in a temp dir.
+# Usage: mkrepodir <dir>   — creates a git-initialized dir
+mkrepodir() {
+  local d="$1"
+  mkdir -p "$d"
+  ( cd "$d" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+}
+
+# Helper: write a minimal config to <dir>/agent-project/requirements.config.yml
+write_config() {
+  local d="$1"
+  mkdir -p "$d/agent-project"
+  cat > "$d/agent-project/requirements.config.yml" <<'CONFEOF'
+area_vocab: [FEAT, SAFE]
+code_roots: [src/]
+test_roots: [tests/]
+narrative_doc: ""
+flag_sources: []
+safety_areas: [SAFE]
+CONFEOF
+}
+
+# Helper: write a registry with flag_sources support
+write_config_with_flags() {
+  local d="$1" flags_file="$2"
+  mkdir -p "$d/agent-project"
+  cat > "$d/agent-project/requirements.config.yml" <<CONFEOF2
+area_vocab: [FEAT]
+code_roots: [src/]
+test_roots: [tests/]
+narrative_doc: ""
+flag_sources:
+  - path: $flags_file
+    parser: yaml-keys
+safety_areas: []
+CONFEOF2
+}
+
+# Helper: write a minimal valid registry
+write_valid_registry() {
+  local d="$1"
+  mkdir -p "$d/requirements"
+  cat > "$d/requirements/registry.yml" <<'REGEOF'
+requirements:
+  - id: REQ-FEAT-001
+    title: "Feature one"
+    area: FEAT
+    status: proposed
+    priority: P1
+    flag: null
+    code: []
+    tests: []
+    satisfied_by: []
+    adr: []
+    source: ""
+    removed_reason: null
+    superseded_by: null
+    owner_approved: false
+  - id: REQ-SAFE-001
+    title: "Safety requirement"
+    area: SAFE
+    status: proposed
+    priority: P0
+    flag: null
+    code: []
+    tests: []
+    satisfied_by: []
+    adr: []
+    source: ""
+    removed_reason: null
+    superseded_by: null
+    owner_approved: false
+REGEOF
+}
+
+# T-RMT-a: dormant no-op — no config → exit 0 + "RMT is dormant" in stdout
+RMTa="$TMP/rmta"; mkrepodir "$RMTa"
+# NO config file written
+rc_rmta=0
+out_rmta="$( cd "$RMTa" && python3 "$REQ_CHECK" 2>&1 )" || rc_rmta=$?
+check "T-RMT-a dormant exit 0 (no config)"      "[ $rc_rmta -eq 0 ]"
+check "T-RMT-a 'RMT is dormant' in stdout"       "printf '%s' '$out_rmta' | grep -qi 'dormant'"
+
+# T-RMT-b: valid 2-entry registry passes → exit 0 + "PASSED" in stdout
+RMTb="$TMP/rmtb"; mkrepodir "$RMTb"
+write_config "$RMTb"
+write_valid_registry "$RMTb"
+# Commit so C08 baseline is available
+( cd "$RMTb" && git add -A && git commit -qm "feat: seed" )
+rc_rmtb=0
+out_rmtb="$( cd "$RMTb" && python3 "$REQ_CHECK" 2>&1 )" || rc_rmtb=$?
+check "T-RMT-b valid registry exits 0"           "[ $rc_rmtb -eq 0 ]"
+check "T-RMT-b 'PASSED' in stdout"               "printf '%s' '$out_rmtb' | grep -q 'PASSED'"
+
+# T-RMT-c: C01 duplicate ID → exit 1 + "C01" in output
+RMTc="$TMP/rmtc"; mkrepodir "$RMTc"
+write_config "$RMTc"
+mkdir -p "$RMTc/requirements"
+cat > "$RMTc/requirements/registry.yml" <<'REGC'
+requirements:
+  - id: REQ-FEAT-001
+    title: "First"
+    area: FEAT
+    status: proposed
+    priority: P1
+    flag: null
+    code: []
+    tests: []
+    satisfied_by: []
+    adr: []
+    source: ""
+    removed_reason: null
+    superseded_by: null
+    owner_approved: false
+  - id: REQ-FEAT-001
+    title: "Duplicate"
+    area: FEAT
+    status: proposed
+    priority: P1
+    flag: null
+    code: []
+    tests: []
+    satisfied_by: []
+    adr: []
+    source: ""
+    removed_reason: null
+    superseded_by: null
+    owner_approved: false
+REGC
+( cd "$RMTc" && git add -A && git commit -qm "feat: seed" )
+rc_rmtc=0
+out_rmtc="$( cd "$RMTc" && python3 "$REQ_CHECK" 2>&1 )" || rc_rmtc=$?
+check "T-RMT-c C01 duplicate exits 1"            "[ $rc_rmtc -ne 0 ]"
+check "T-RMT-c C01 in output"                    "printf '%s' '$out_rmtc' | grep -q 'C01'"
+
+# T-RMT-d: C08 append-only — ID disappeared vs baseline → exit 1 + "C08" in output
+# The C08 check compares against HEAD~1; we need two commits: baseline (2 entries) then current (1 entry).
+RMTd="$TMP/rmtd"; mkrepodir "$RMTd"
+write_config "$RMTd"
+mkdir -p "$RMTd/requirements"
+# Commit 1 (will become HEAD~1 of commit 2): seed repo so config exists
+cat > "$RMTd/requirements/registry.yml" <<'REGD0'
+requirements:
+  - id: REQ-FEAT-000
+    title: "Seed"
+    area: FEAT
+    status: proposed
+    priority: P3
+    flag: null
+    code: []
+    tests: []
+    satisfied_by: []
+    adr: []
+    source: ""
+    removed_reason: null
+    superseded_by: null
+    owner_approved: false
+REGD0
+( cd "$RMTd" && git add -A && git commit -qm "feat: seed" )
+# Commit 2 (HEAD~1 for the violation check): 2 entries, including REQ-FEAT-002
+cat > "$RMTd/requirements/registry.yml" <<'REGD1'
+requirements:
+  - id: REQ-FEAT-001
+    title: "One"
+    area: FEAT
+    status: proposed
+    priority: P1
+    flag: null
+    code: []
+    tests: []
+    satisfied_by: []
+    adr: []
+    source: ""
+    removed_reason: null
+    superseded_by: null
+    owner_approved: false
+  - id: REQ-FEAT-002
+    title: "Two"
+    area: FEAT
+    status: proposed
+    priority: P2
+    flag: null
+    code: []
+    tests: []
+    satisfied_by: []
+    adr: []
+    source: ""
+    removed_reason: null
+    superseded_by: null
+    owner_approved: false
+REGD1
+( cd "$RMTd" && git add requirements/registry.yml && git commit -qm "feat: baseline with 2 entries" )
+# Current (working tree, not committed): REQ-FEAT-002 deleted — C08 violation
+cat > "$RMTd/requirements/registry.yml" <<'REGD2'
+requirements:
+  - id: REQ-FEAT-001
+    title: "One"
+    area: FEAT
+    status: proposed
+    priority: P1
+    flag: null
+    code: []
+    tests: []
+    satisfied_by: []
+    adr: []
+    source: ""
+    removed_reason: null
+    superseded_by: null
+    owner_approved: false
+REGD2
+rc_rmtd=0
+out_rmtd="$( cd "$RMTd" && python3 "$REQ_CHECK" 2>&1 )" || rc_rmtd=$?
+check "T-RMT-d C08 append-only exits 1"          "[ $rc_rmtd -ne 0 ]"
+check "T-RMT-d C08 in output"                    "printf '%s' '$out_rmtd' | grep -q 'C08'"
+
+# T-RMT-e: C09 status:removed without removed_reason → exit 1 + "C09" in output
+RMTe="$TMP/rmte"; mkrepodir "$RMTe"
+write_config "$RMTe"
+mkdir -p "$RMTe/requirements"
+cat > "$RMTe/requirements/registry.yml" <<'REGE'
+requirements:
+  - id: REQ-FEAT-001
+    title: "Removed without reason"
+    area: FEAT
+    status: removed
+    priority: P2
+    flag: null
+    code: []
+    tests: []
+    satisfied_by: []
+    adr: []
+    source: "doc"
+    removed_reason: null
+    superseded_by: null
+    owner_approved: false
+REGE
+( cd "$RMTe" && git add -A && git commit -qm "feat: seed" )
+rc_rmte=0
+out_rmte="$( cd "$RMTe" && python3 "$REQ_CHECK" 2>&1 )" || rc_rmte=$?
+check "T-RMT-e C09 missing reason exits 1"       "[ $rc_rmte -ne 0 ]"
+check "T-RMT-e C09 in output"                    "printf '%s' '$out_rmte' | grep -q 'C09'"
+
+# T-RMT-f: C10 safety guard — P0 status:removed without owner_approved → exit 1 + "C10" in output
+RMTf="$TMP/rmtf"; mkrepodir "$RMTf"
+write_config "$RMTf"
+mkdir -p "$RMTf/requirements"
+cat > "$RMTf/requirements/registry.yml" <<'REGF'
+requirements:
+  - id: REQ-FEAT-001
+    title: "Safety req removed without approval"
+    area: FEAT
+    status: removed
+    priority: P0
+    flag: null
+    code: []
+    tests: []
+    satisfied_by: []
+    adr: []
+    source: "doc"
+    removed_reason: "Replaced"
+    superseded_by: null
+    owner_approved: false
+REGF
+( cd "$RMTf" && git add -A && git commit -qm "feat: seed" )
+rc_rmtf=0
+out_rmtf="$( cd "$RMTf" && python3 "$REQ_CHECK" 2>&1 )" || rc_rmtf=$?
+check "T-RMT-f C10 safety guard exits 1"         "[ $rc_rmtf -ne 0 ]"
+check "T-RMT-f C10 in output"                    "printf '%s' '$out_rmtf' | grep -q 'C10'"
+
+# T-RMT-g: C10 passes with owner_approved:true → exit 0
+RMTg="$TMP/rmtg"; mkrepodir "$RMTg"
+write_config "$RMTg"
+mkdir -p "$RMTg/requirements"
+cat > "$RMTg/requirements/registry.yml" <<'REGG'
+requirements:
+  - id: REQ-FEAT-001
+    title: "Safety req removed with approval"
+    area: FEAT
+    status: removed
+    priority: P0
+    flag: null
+    code: []
+    tests: []
+    satisfied_by: []
+    adr: []
+    source: "doc"
+    removed_reason: "Replaced by REQ-FEAT-002"
+    superseded_by: REQ-FEAT-002
+    owner_approved: true
+REGG
+( cd "$RMTg" && git add -A && git commit -qm "feat: seed" )
+rc_rmtg=0
+out_rmtg="$( cd "$RMTg" && python3 "$REQ_CHECK" 2>&1 )" || rc_rmtg=$?
+check "T-RMT-g C10 with owner_approved exits 0"  "[ $rc_rmtg -eq 0 ]"
+
+# T-RMT-h: C06 broken code path → exit 1 + "C06" in output
+RMTh="$TMP/rmth"; mkrepodir "$RMTh"
+write_config "$RMTh"
+mkdir -p "$RMTh/requirements"
+cat > "$RMTh/requirements/registry.yml" <<'REGH'
+requirements:
+  - id: REQ-FEAT-001
+    title: "Implemented req with broken path"
+    area: FEAT
+    status: implemented
+    priority: P1
+    flag: null
+    code: [nonexistent_file.py]
+    tests: [tests/test_feat.py]
+    satisfied_by: [PR#1]
+    adr: []
+    source: "doc"
+    removed_reason: null
+    superseded_by: null
+    owner_approved: false
+REGH
+( cd "$RMTh" && git add -A && git commit -qm "feat: seed" )
+rc_rmth=0
+out_rmth="$( cd "$RMTh" && python3 "$REQ_CHECK" 2>&1 )" || rc_rmth=$?
+check "T-RMT-h C06 broken code path exits 1"     "[ $rc_rmth -ne 0 ]"
+check "T-RMT-h C06 in output"                    "printf '%s' '$out_rmth' | grep -q 'C06'"
+
+# T-RMT-i: C07 orphaned flag — flag not in flag_source → exit 1 + "C07" in output
+RMTi="$TMP/rmti"; mkrepodir "$RMTi"
+# Write a flags file with only "real_flag" key
+mkdir -p "$RMTi"
+cat > "$RMTi/flags.yml" <<'FLAGSI'
+real_flag: false
+FLAGSI
+write_config_with_flags "$RMTi" "flags.yml"
+mkdir -p "$RMTi/requirements"
+cat > "$RMTi/requirements/registry.yml" <<'REGI'
+requirements:
+  - id: REQ-FEAT-001
+    title: "Req with orphaned flag"
+    area: FEAT
+    status: proposed
+    priority: P1
+    flag: missing_flag
+    code: []
+    tests: []
+    satisfied_by: []
+    adr: []
+    source: ""
+    removed_reason: null
+    superseded_by: null
+    owner_approved: false
+REGI
+( cd "$RMTi" && git add -A && git commit -qm "feat: seed" )
+rc_rmti=0
+out_rmti="$( cd "$RMTi" && python3 "$REQ_CHECK" 2>&1 )" || rc_rmti=$?
+check "T-RMT-i C07 orphaned flag exits 1"        "[ $rc_rmti -ne 0 ]"
+check "T-RMT-i C07 in output"                    "printf '%s' '$out_rmti' | grep -q 'C07'"
+
+# T-RMT-j: C11 undocumented flag (warn only) — flag_source has key with no registry entry → exit 0 + "C11" in output
+RMTj="$TMP/rmtj"; mkrepodir "$RMTj"
+cat > "$RMTj/flags.yml" <<'FLAGSJ'
+undocumented_flag: false
+another_flag: true
+FLAGSJ
+write_config_with_flags "$RMTj" "flags.yml"
+mkdir -p "$RMTj/requirements"
+cat > "$RMTj/requirements/registry.yml" <<'REGJ'
+requirements:
+  - id: REQ-FEAT-001
+    title: "No flag on this req"
+    area: FEAT
+    status: proposed
+    priority: P1
+    flag: null
+    code: []
+    tests: []
+    satisfied_by: []
+    adr: []
+    source: ""
+    removed_reason: null
+    superseded_by: null
+    owner_approved: false
+REGJ
+( cd "$RMTj" && git add -A && git commit -qm "feat: seed" )
+rc_rmtj=0
+out_rmtj="$( cd "$RMTj" && python3 "$REQ_CHECK" 2>&1 )" || rc_rmtj=$?
+check "T-RMT-j C11 warn-only exits 0"            "[ $rc_rmtj -eq 0 ]"
+check "T-RMT-j C11 in output"                    "printf '%s' '$out_rmtj' | grep -q 'C11'"
+
+# T-RMT-k: C05 implemented with empty satisfied_by → exit 1 + "C05" in output
+RMTk="$TMP/rmtk"; mkrepodir "$RMTk"
+write_config "$RMTk"
+# Create an actual file so C06 doesn't fire — only C05 (empty satisfied_by) should fire
+mkdir -p "$RMTk/src" "$RMTk/tests"
+printf 'pass\n' > "$RMTk/src/feature.py"
+printf 'pass\n' > "$RMTk/tests/test_feature.py"
+mkdir -p "$RMTk/requirements"
+cat > "$RMTk/requirements/registry.yml" <<'REGK'
+requirements:
+  - id: REQ-FEAT-001
+    title: "Implemented but satisfied_by empty"
+    area: FEAT
+    status: implemented
+    priority: P1
+    flag: null
+    code: [feature.py]
+    tests: [test_feature.py]
+    satisfied_by: []
+    adr: []
+    source: "doc"
+    removed_reason: null
+    superseded_by: null
+    owner_approved: false
+REGK
+( cd "$RMTk" && git add -A && git commit -qm "feat: seed" )
+rc_rmtk=0
+out_rmtk="$( cd "$RMTk" && python3 "$REQ_CHECK" 2>&1 )" || rc_rmtk=$?
+check "T-RMT-k C05 empty satisfied_by exits 1"   "[ $rc_rmtk -ne 0 ]"
+check "T-RMT-k C05 in output"                    "printf '%s' '$out_rmtk' | grep -q 'C05'"
+
+# T-RMT-l: PyYAML missing graceful exit — simulate by wrapping with PYTHONPATH override
+RMTl="$TMP/rmtl"; mkrepodir "$RMTl"
+write_config "$RMTl"
+write_valid_registry "$RMTl"
+# Create a fake yaml.py that raises ImportError immediately on import
+FAKE_YAML_DIR="$TMP/fake_yaml_dir"
+mkdir -p "$FAKE_YAML_DIR"
+printf 'raise ImportError("fake: yaml not installed")\n' > "$FAKE_YAML_DIR/yaml.py"
+rc_rmtl=0
+out_rmtl="$( cd "$RMTl" && PYTHONPATH="$FAKE_YAML_DIR" python3 "$REQ_CHECK" 2>&1 )" || rc_rmtl=$?
+check "T-RMT-l PyYAML missing exits 2"           "[ $rc_rmtl -eq 2 ]"
+check "T-RMT-l install hint in stderr"           "printf '%s' '$out_rmtl' | grep -qi 'pyyaml\|pip install'"
+
+# T-RMT-m: req-check is read-only — md5sum of registry unchanged after a run
+RMTm="$TMP/rmtm"; mkrepodir "$RMTm"
+write_config "$RMTm"
+write_valid_registry "$RMTm"
+( cd "$RMTm" && git add -A && git commit -qm "feat: seed" )
+md5_rmtm_before="$(md5sum "$RMTm/requirements/registry.yml" | awk '{print $1}')"
+( cd "$RMTm" && python3 "$REQ_CHECK" >/dev/null 2>&1 ) || true
+md5_rmtm_after="$(md5sum "$RMTm/requirements/registry.yml" | awk '{print $1}')"
+check "T-RMT-m registry md5 unchanged after run (read-only)" "[ '$md5_rmtm_before' = '$md5_rmtm_after' ]"
+
+# T-RMT-n: skill SKILL.md has "Read-only" and "never edits" language
+check "T-RMT-n skill SKILL.md has 'Read-only' language" \
+  "grep -qi 'read.only' '$REPO_ROOT/claude/skills/req-check/SKILL.md'"
+check "T-RMT-n skill SKILL.md has 'never edits' language" \
+  "grep -qi 'never.*edit\|do not.*edit\|never auto.edit' '$REPO_ROOT/claude/skills/req-check/SKILL.md'"
+
+# T-RMT-o: no elard strings in engine files (scripts/, templates/, claude/skills/req-check/)
+check "T-RMT-o no elard strings in scripts/" \
+  "[ \"\$(grep -ril 'elard' '$REPO_ROOT/scripts/' 2>/dev/null | wc -l)\" -eq 0 ]"
+check "T-RMT-o no elard strings in templates/ (RMT templates)" \
+  "[ \"\$(grep -il 'elard' '$REPO_ROOT/templates/requirements.config.template.yml' '$REPO_ROOT/templates/requirements.registry.template.yml' 2>/dev/null | wc -l)\" -eq 0 ]"
+check "T-RMT-o no elard strings in claude/skills/req-check/" \
+  "[ \"\$(grep -ril 'elard' '$REPO_ROOT/claude/skills/req-check/' 2>/dev/null | wc -l)\" -eq 0 ]"
+
+# T-RMT-p: C06 passes when code path resolves under a declared code_root (not just as a direct path)
+RMTp="$TMP/rmtp"; mkrepodir "$RMTp"
+write_config "$RMTp"
+# Create the file under src/ (a code_root) — registry references it as a relative-to-root path
+mkdir -p "$RMTp/src" "$RMTp/tests"
+printf 'pass\n' > "$RMTp/src/widget.py"
+printf 'pass\n' > "$RMTp/tests/test_widget.py"
+mkdir -p "$RMTp/requirements"
+cat > "$RMTp/requirements/registry.yml" <<'REGP'
+requirements:
+  - id: REQ-FEAT-001
+    title: "Req resolved under code_root"
+    area: FEAT
+    status: implemented
+    priority: P1
+    flag: null
+    code: [widget.py]
+    tests: [test_widget.py]
+    satisfied_by: [PR#5]
+    adr: []
+    source: "doc"
+    removed_reason: null
+    superseded_by: null
+    owner_approved: false
+REGP
+( cd "$RMTp" && git add -A && git commit -qm "feat: seed" )
+rc_rmtp=0
+out_rmtp="$( cd "$RMTp" && python3 "$REQ_CHECK" 2>&1 )" || rc_rmtp=$?
+check "T-RMT-p C06 resolves via code_root exits 0" "[ $rc_rmtp -eq 0 ]"
+check "T-RMT-p PASSED in output"                  "printf '%s' '$out_rmtp' | grep -q 'PASSED'"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]

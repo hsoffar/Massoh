@@ -18,6 +18,8 @@ the packet/issue — not the implementer's summary.
 - [ ] Advisory products: calibration intact (confidence / hedges / disclaimers)? No false certainty?
 - [ ] No frozen feature implemented?
 - [ ] Keep-older-data respected (no hard-delete / overwrite)?
+- [ ] **RMT (when registry exists):** `req-check` exits 0? (`/req-check` or
+      `python3 scripts/req-check` — skip if project has no `requirements/registry.yml`)
 
 ## Compatibility + data
 - [ ] API contract: unchanged, or both sides of the seam shipped together?

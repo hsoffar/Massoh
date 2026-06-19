@@ -11,6 +11,20 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.17.0] - 2026-06-19
+
+### Added
+- **RMT (Requirements Management & Traceability):** opt-in, dormant-by-default
+  engine capability. Adds an addressable requirements registry, forward
+  code/test/PR traceability, and a CI validator (`req-check`). Projects without
+  `agent-project/requirements.config.yml` are unaffected. See
+  `policies/14_REQUIREMENTS_TRACEABILITY.md`.
+- `scripts/req-check` — reference validator (Python stdlib + PyYAML; 12 checks;
+  config-driven; zero project-specific strings).
+- `claude/skills/req-check` — engine skill for running the validator.
+- `templates/requirements.registry.template.yml`
+- `templates/requirements.config.template.yml`
+
 ## [0.16.0] - 2026-06-19
 ### Added
 - **`massoh agents-md`** — emit a concise `AGENTS.md` team-index at the repo root: sentinel on
