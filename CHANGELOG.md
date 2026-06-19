@@ -11,6 +11,19 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.11.0] - 2026-06-19
+### Changed
+- **`bin/massoh` modularized** — 12 additive feature verbs extracted to `lib/verbs/*.sh`, sourced
+  at startup. Zero behavior change: same output, same exit codes, same flags on all verbs.
+  - `lib/verbs/`: discover, review, standup, plan, learn, recommend, ledger, meta, gate, board, cron, work.
+  - Safety-critical core (install/uninstall/on/off/enable/disable/status/doctor/update/version) stays
+    in `bin/massoh` (now ~216 lines instead of 1662).
+  - **`cmd_install`** now copies `lib/verbs/` into `~/.claude/agent-os/lib/verbs/`.
+  - **`cmd_doctor`** now verifies `~/.claude/agent-os/lib/verbs/` is present.
+  - **`manifest.yml`** updated with `lib/verbs/` entry (in lockstep with `cmd_install`).
+  - **Backward-compat**: `cmd_uninstall` removes `agent-os/` wholesale (includes `lib/verbs/`).
+  - **MB1**: sourcing loop uses `$MASSOH_HOME` (symlink-safe). **MB3**: missing lib file → `die`. 
+
 ## [0.10.0] - 2026-06-19
 ### Added
 - **`massoh board --push plane`** — push Massoh's file-based task state to a Plane kanban board

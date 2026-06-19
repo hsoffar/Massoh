@@ -29,6 +29,11 @@ global_install:
     dest: ~/.claude/agent-os/
     source: .            # OPERATING_SYSTEM.md + policies/ + templates/ + docs/ + manifest.yml + VERSION
     # NOTE: the exact payload is the `for p in …` list in bin/massoh:cmd_install — keep the two in sync.
+  # verb library: sourced by bin/massoh at startup; installed into agent-os/lib/verbs/ (v0.11.0)
+  - kind: dir
+    dest: ~/.claude/agent-os/lib/verbs/
+    source: lib/verbs
+    # NOTE: listed in the `for p in …` loop in bin/massoh:cmd_install alongside the engine artifacts above.
 
 # Per-repo scaffold created by `massoh on` (NEVER overwritten — created only if missing):
 project_scaffold:

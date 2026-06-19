@@ -93,6 +93,7 @@ check "version prints semver"                "echo '$vout' | grep -qE '^massoh [
 B6="$TMP/bare6.git"; git clone -q --bare "$REPO_ROOT" "$B6"
 W6="$TMP/w6"; git clone -q "$B6" "$W6"; ( cd "$W6" && git config user.email t@t && git config user.name t )
 cp "$MASSOH" "$W6/bin/massoh"; cp "$REPO_ROOT/VERSION" "$W6/VERSION"   # overlay uncommitted working-tree files
+cp -rp "$REPO_ROOT/lib" "$W6/"   # v0.11.0: bin/massoh now sources lib/verbs/; overlay alongside the binary
 A6="$TMP/a6"; git clone -q "$B6" "$A6"; ( cd "$A6" && git config user.email t@t && git config user.name t )
 ( cd "$A6" && git checkout -q main && echo z >> README.md && git commit -qam "advance main" && git push -q origin main )
 CC6="$(newcc)"; MASSOH_HOME="$W6" CLAUDE_CONFIG_DIR="$CC6" "$W6/bin/massoh" install >/dev/null 2>&1
@@ -1711,6 +1712,112 @@ rc23b=0
   PLANE_WORKSPACE_SLUG="ws" PLANE_PROJECT_ID="pid" PLANE_ALLOW_HTTP=1 \
   "$MASSOH" board --push plane >/dev/null 2>&1 ) || rc23b=$?
 check "T23b missing AGENT_BACKLOG.md: exit 0 (|| true degrade)" "[ $rc23b -eq 0 ]"
+
+echo "== T-MB: modularize bin/massoh (v0.11.0) =="
+
+# T-MB-a: symlink invocation — invoke bin/massoh via a symlink; assert status exits 0 + prints version.
+# Confirms MB1: sourcing loop derives verb paths from $MASSOH_HOME (symlink-safe).
+SYMLINK_BIN="$TMP/symlink_massoh"
+ln -sf "$MASSOH" "$SYMLINK_BIN"
+TMB_CC="$(newcc)"
+CLAUDE_CONFIG_DIR="$TMB_CC" "$SYMLINK_BIN" install >/dev/null 2>&1
+tmb_a_out="$(CLAUDE_CONFIG_DIR="$TMB_CC" "$SYMLINK_BIN" status 2>&1)"
+tmb_a_rc=$?
+check "T-MB-a symlink invocation exits 0"              "[ $tmb_a_rc -eq 0 ]"
+check "T-MB-a symlink invocation prints version line"  "echo '$tmb_a_out' | grep -q 'version:'"
+
+# T-MB-b: install layout — run massoh install; assert $CC/agent-os/lib/verbs/ exists with .sh files.
+# Confirms MB2: cmd_install wires lib/verbs/ into the installed layout.
+TMB_CCb="$(newcc)"
+CLAUDE_CONFIG_DIR="$TMB_CCb" "$MASSOH" install >/dev/null 2>&1
+check "T-MB-b install creates agent-os/lib/verbs/ directory"  "[ -d '$TMB_CCb/agent-os/lib/verbs' ]"
+check "T-MB-b agent-os/lib/verbs/ contains at least one .sh file" \
+  "ls '$TMB_CCb/agent-os/lib/verbs/'*.sh >/dev/null 2>&1"
+
+# T-MB-c: uninstall clean — install then uninstall; assert agent-os/ is gone (entire tree removed).
+# Confirms MB2 backward-compat: cmd_uninstall removes agent-os/ wholesale (includes lib/verbs/).
+TMB_CCc="$(newcc)"
+CLAUDE_CONFIG_DIR="$TMB_CCc" "$MASSOH" install >/dev/null 2>&1
+CLAUDE_CONFIG_DIR="$TMB_CCc" "$MASSOH" uninstall >/dev/null 2>&1
+check "T-MB-c uninstall removes entire agent-os/ tree (includes lib/verbs/)" \
+  "[ ! -d '$TMB_CCc/agent-os' ]"
+
+# T-MB-d: doctor detects drift — install, remove lib/verbs/, run doctor; assert non-zero + MISS.
+# Confirms MB4: cmd_doctor verifies lib/verbs/ presence.
+TMB_CCd="$(newcc)"
+CLAUDE_CONFIG_DIR="$TMB_CCd" "$MASSOH" install >/dev/null 2>&1
+rm -rf "$TMB_CCd/agent-os/lib/verbs"
+tmb_d_rc=0
+tmb_d_out="$(CLAUDE_CONFIG_DIR="$TMB_CCd" "$MASSOH" doctor --offline 2>&1)" || tmb_d_rc=$?
+check "T-MB-d doctor exits non-zero when lib/verbs/ missing"  "[ $tmb_d_rc -ne 0 ]"
+check "T-MB-d doctor output contains MISS for lib/verbs/"     "echo '$tmb_d_out' | grep -q 'MISS'"
+
+# T-MB-e: missing lib file fails loudly — remove the entire lib/verbs/ directory from a scratch copy.
+# The glob "$MASSOH_HOME/lib/verbs/"*.sh expands to a literal unmatched string when the directory is
+# absent, triggering the [ -f ] guard → exit non-zero + stderr "missing lib file". Confirms MB3.
+TMB_SCRATCH="$TMP/massoh_scratch"; mkdir -p "$TMB_SCRATCH"
+cp -rp "$REPO_ROOT/bin" "$TMB_SCRATCH/"
+cp -rp "$REPO_ROOT/lib" "$TMB_SCRATCH/"
+cp -rp "$REPO_ROOT/templates" "$TMB_SCRATCH/" 2>/dev/null || true
+cp -rp "$REPO_ROOT/VERSION" "$TMB_SCRATCH/" 2>/dev/null || true
+# Remove all verb files (the entire directory) to force the glob to expand to a literal unmatched string
+rm -rf "$TMB_SCRATCH/lib/verbs"
+tmb_e_rc=0
+tmb_e_err="$(MASSOH_HOME="$TMB_SCRATCH" "$TMB_SCRATCH/bin/massoh" status 2>&1 >/dev/null)" || tmb_e_rc=$?
+check "T-MB-e missing lib file: exit non-zero"                 "[ $tmb_e_rc -ne 0 ]"
+check "T-MB-e missing lib file: stderr contains 'missing lib file'" \
+  "printf '%s\n' \"\$tmb_e_err\" | grep -q 'missing lib file'"
+
+# T-MB-f: byte-identical output — invoke massoh <unknown-verb> before and after; diff must be empty.
+# Confirms MB5: non-dynamic output (die() usage line) is byte-identical after extraction.
+tmb_f_before="massoh: unknown command 'unknownverb'. verbs: install update on off enable disable status doctor discover review standup plan learn recommend ledger meta cron gate board version work uninstall [--link]"
+tmb_f_after="$("$MASSOH" unknownverb 2>&1 || true)"
+check "T-MB-f byte-identical unknown-verb die() output" \
+  "[ '$tmb_f_before' = '$tmb_f_after' ]"
+
+# T-MB-g: smoke-dispatch every verb (non-interactive; just confirm each dispatches without crash).
+# Confirms MB8: all 12 moved verbs still dispatch correctly.
+# Use a throwaway massoh project for verbs that require it.
+TMB_PROJ="$TMP/tmb_proj"; mkdir -p "$TMB_PROJ"
+( cd "$TMB_PROJ" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+echo x > "$TMB_PROJ/.massoh"
+( cd "$TMB_PROJ" && git add -A && git commit -qm "feat: seed" ) >/dev/null 2>&1
+mkdir -p "$TMB_PROJ/.agent_tasks" "$TMB_PROJ/agent-project"
+printf '# AGENT_SYNC\n\n## Decision log\n' > "$TMB_PROJ/AGENT_SYNC.md"
+printf '| # | Pri | Item | Why | Status |\n|---|---|---|---|---|\n| 1 | P1 | x | y | TODO |\n' > "$TMB_PROJ/AGENT_BACKLOG.md"
+# discover (no-op: STANDARDS.md already seeded)
+rc_tmb_discover=0; ( cd "$TMB_PROJ" && "$MASSOH" discover >/dev/null 2>&1 ) || rc_tmb_discover=$?
+check "T-MB-g smoke: discover dispatches (exit 0)"   "[ $rc_tmb_discover -eq 0 ]"
+# review
+rc_tmb_review=0; ( cd "$TMB_PROJ" && "$MASSOH" review --no-write >/dev/null 2>&1 ) || rc_tmb_review=$?
+check "T-MB-g smoke: review dispatches (exit 0)"     "[ $rc_tmb_review -eq 0 ]"
+# standup
+rc_tmb_standup=0; ( cd "$TMB_PROJ" && "$MASSOH" standup --no-write >/dev/null 2>&1 ) || rc_tmb_standup=$?
+check "T-MB-g smoke: standup dispatches (exit 0)"    "[ $rc_tmb_standup -eq 0 ]"
+# plan
+rc_tmb_plan=0; ( cd "$TMB_PROJ" && "$MASSOH" plan --no-write >/dev/null 2>&1 ) || rc_tmb_plan=$?
+check "T-MB-g smoke: plan dispatches (exit 0)"       "[ $rc_tmb_plan -eq 0 ]"
+# learn
+rc_tmb_learn=0; ( cd "$TMB_PROJ" && "$MASSOH" learn >/dev/null 2>&1 ) || rc_tmb_learn=$?
+check "T-MB-g smoke: learn dispatches (exit 0)"      "[ $rc_tmb_learn -eq 0 ]"
+# recommend
+rc_tmb_recommend=0; ( cd "$TMB_PROJ" && "$MASSOH" recommend >/dev/null 2>&1 ) || rc_tmb_recommend=$?
+check "T-MB-g smoke: recommend dispatches (exit 0)"  "[ $rc_tmb_recommend -eq 0 ]"
+# ledger (no-op: no ledger file yet)
+rc_tmb_ledger=0; ( cd "$TMB_PROJ" && "$MASSOH" ledger >/dev/null 2>&1 ) || rc_tmb_ledger=$?
+check "T-MB-g smoke: ledger dispatches (exit 0)"     "[ $rc_tmb_ledger -eq 0 ]"
+# meta
+rc_tmb_meta=0; ( cd "$TMB_PROJ" && "$MASSOH" meta >/dev/null 2>&1 ) || rc_tmb_meta=$?
+check "T-MB-g smoke: meta dispatches (exit 0)"       "[ $rc_tmb_meta -eq 0 ]"
+# gate (off is idempotent when not installed)
+rc_tmb_gate=0; ( cd "$TMB_PROJ" && "$MASSOH" gate off >/dev/null 2>&1 ) || rc_tmb_gate=$?
+check "T-MB-g smoke: gate dispatches (exit 0)"       "[ $rc_tmb_gate -eq 0 ]"
+# board (no-push: prints table only)
+rc_tmb_board=0; ( cd "$TMB_PROJ" && "$MASSOH" board --no-push >/dev/null 2>&1 ) || rc_tmb_board=$?
+check "T-MB-g smoke: board dispatches (exit 0)"      "[ $rc_tmb_board -eq 0 ]"
+# version (always works)
+rc_tmb_version=0; "$MASSOH" version >/dev/null 2>&1 || rc_tmb_version=$?
+check "T-MB-g smoke: version dispatches (exit 0)"    "[ $rc_tmb_version -eq 0 ]"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
