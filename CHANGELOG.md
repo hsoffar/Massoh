@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to Massoh. Format: [Keep a Changelog](https://keepachangelog.com/).
-Versioning is the product version in `VERSION` (the engine's `manifest.yml version:` is separate —
+Versioning is the product version in `VERSION` (the engine's `manifest.yml schema_version:` is separate —
 it stamps the install-boundary schema, not the product).
 
 ## How to update an existing install
@@ -10,6 +10,15 @@ massoh update      # git pull --ff-only (hardened: stashes local edits) + reinst
 massoh doctor      # verify the install matches the manifest; warns if a newer version is available
 massoh version     # show the installed version + clone SHA
 ```
+
+## [0.18.0] - 2026-06-19
+
+### Changed
+- **schema-rename:** `manifest.yml` key `version:` renamed to `schema_version:` for clarity (schema
+  stamp is now distinct from the product `VERSION` file by name, not just by convention).
+- Added `manifest_schema_ver()` helper in `bin/massoh`: prefers `schema_version:`, falls back to
+  deprecated `version:` with a one-line stderr note (backward-compat until v0.19).
+- Updated documentation references in `CHANGELOG.md`, `CHARTER.md`, and the manifest comment line.
 
 ## [0.17.0] - 2026-06-19
 

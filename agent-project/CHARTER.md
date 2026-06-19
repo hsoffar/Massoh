@@ -40,6 +40,6 @@ The system itself is markdown convention executed by the model.
 ## 5. Conventions
 - Commits: Conventional Commits; trailer `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
 - Branching: branch + PR per feature; default branch is `main`.
-- Versioning: engine carries `manifest.yml version:`; product is `v0.1`. Bump on any change to the
+- Versioning: engine carries `manifest.yml schema_version:`; product is `v0.1`. Bump on any change to the
   install/uninstall contract.
 - Never commit: `.env*`, local config, build outputs, secrets, user `~/.claude` backups.
