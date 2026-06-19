@@ -11,6 +11,18 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.19.0] - 2026-06-19
+
+### Added
+- **bats infra:** `test/massoh.bats` — native bats pilot wiring T1 (install/doctor, 6 `@test`
+  blocks) as a parallel test harness. CI now runs both `bash test/run.sh` (457+ checks, source
+  of truth) and `bats test/massoh.bats` (TAP-formatted). `test/run.sh` is NOT replaced.
+- CI: `sudo apt-get install -y bats` step added before the bats run step (mirrors the `jq`
+  install pattern).
+- Migration template: `test/massoh.bats` header documents the pattern for future section ports
+  and notes which sections (cross-test checksum chain T11i→T15l→T16r→T22b; inline Python3
+  mock servers T18–T19) need additional design work before native porting.
+
 ## [0.18.0] - 2026-06-19
 
 ### Changed
