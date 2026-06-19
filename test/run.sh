@@ -1770,7 +1770,7 @@ check "T-MB-e missing lib file: stderr contains 'missing lib file'" \
 
 # T-MB-f: byte-identical output — invoke massoh <unknown-verb> before and after; diff must be empty.
 # Confirms MB5: non-dynamic output (die() usage line) is byte-identical after extraction.
-tmb_f_before="massoh: unknown command 'unknownverb'. verbs: install update on off enable disable status doctor discover review standup plan learn recommend ledger meta cron gate board intake version work uninstall [--link]"
+tmb_f_before="massoh: unknown command 'unknownverb'. verbs: install update on off enable disable status doctor discover review standup plan learn recommend ledger meta cron gate board intake fleet version work uninstall [--link]"
 tmb_f_after="$("$MASSOH" unknownverb 2>&1 || true)"
 check "T-MB-f byte-identical unknown-verb die() output" \
   "[ '$tmb_f_before' = '$tmb_f_after' ]"
@@ -1978,6 +1978,127 @@ check "T-IK-k non-Massoh-dir: no AGENT_BACKLOG.md created" "[ ! -f '$IKk/AGENT_B
 rc_tmb_intake=0
 ( cd "$TMB_PROJ" && "$MASSOH" intake "smoke test idea" >/dev/null 2>&1 ) || rc_tmb_intake=$?
 check "T-IK-k smoke: intake dispatches from bin/massoh (exit 0)" "[ $rc_tmb_intake -eq 0 ]"
+
+echo "== T-FL: massoh fleet — read-only multi-repo rollup =="
+
+# Helper: create a minimal fake Massoh repo for fleet tests.
+# Creates .massoh marker, .agent_tasks/<task>/ dirs, and AGENT_SYNC.md.
+mkfleetrepo() {
+  local d="$1"
+  mkdir -p "$d"
+  ( cd "$d" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+  printf 'massoh project marker\n' > "$d/.massoh"
+  mkdir -p "$d/.agent_tasks"
+  printf '# AGENT_SYNC\nAgent: massoh-implementer\nMode: IMPLEMENTATION\n\n## Decision log\n' > "$d/AGENT_SYNC.md"
+  ( cd "$d" && git add -A && git commit -qm "feat: seed fleet repo" )
+}
+
+# --- T-FL-a / T-FL-b: write-isolation proof (highest-priority test; FL1) ---
+# Two fake repos; snapshot them before fleet; assert byte-identical after.
+FLEET_ROOT_AB="$TMP/fl_ab"
+mkdir -p "$FLEET_ROOT_AB"
+REPO_A="$FLEET_ROOT_AB/repo-alpha"; mkfleetrepo "$REPO_A"
+REPO_B="$FLEET_ROOT_AB/repo-beta";  mkfleetrepo "$REPO_B"
+# Add some task dirs so there is content to read
+mkdir -p "$REPO_A/.agent_tasks/TASK-doing"
+printf '# 04\n' > "$REPO_A/.agent_tasks/TASK-doing/04_implementation_packet.md"
+mkdir -p "$REPO_A/.agent_tasks/TASK-blocked"
+printf '# 00\n' > "$REPO_A/.agent_tasks/TASK-blocked/00_request.md"
+printf '| # | Pri | Item | Why | Status |\n|---|---|---|---|---|\n| 1 | P1 | thing | why | BLOCKED |\n' > "$REPO_A/AGENT_BACKLOG.md"
+mkdir -p "$REPO_B/.agent_tasks/TASK-todo"
+printf '# 00\n' > "$REPO_B/.agent_tasks/TASK-todo/00_request.md"
+
+# Byte-snapshot of both repos BEFORE fleet run (FL1 proof method from 03_architecture_safety.md)
+before_a="$(cd "$REPO_A" && find . -type f | sort | xargs ls -la 2>/dev/null | md5sum)"
+before_b="$(cd "$REPO_B" && find . -type f | sort | xargs ls -la 2>/dev/null | md5sum)"
+
+# Run fleet — must write NOTHING to either repo
+"$MASSOH" fleet --root "$FLEET_ROOT_AB" >/dev/null 2>&1 || true
+
+# Snapshot AFTER
+after_a="$(cd "$REPO_A" && find . -type f | sort | xargs ls -la 2>/dev/null | md5sum)"
+after_b="$(cd "$REPO_B" && find . -type f | sort | xargs ls -la 2>/dev/null | md5sum)"
+
+check "T-FL-a REPO_A byte-identical after fleet (write-isolation proof)" "[ '$before_a' = '$after_a' ]"
+check "T-FL-b REPO_B byte-identical after fleet (write-isolation proof)" "[ '$before_b' = '$after_b' ]"
+
+# --- T-FL-c: bounded discovery — depth-4 marker NOT found at default maxdepth=3 ---
+DEEP_ROOT="$TMP/fl_deep"
+mkdir -p "$DEEP_ROOT/level1/level2/level3/level4"
+printf 'massoh marker\n' > "$DEEP_ROOT/level1/level2/level3/level4/.massoh"
+out_fl_c="$("$MASSOH" fleet --root "$DEEP_ROOT" 2>/dev/null || true)"
+check "T-FL-c deep .massoh (depth 4) NOT discovered at default maxdepth=3" \
+  "! printf '%s\n' '$out_fl_c' | grep -q 'level4'"
+
+# --- T-FL-d: degrade on unreadable .agent_tasks/ (FL5) ---
+FLEET_D_ROOT="$TMP/fl_d_root"
+mkdir -p "$FLEET_D_ROOT"
+BAD_REPO="$FLEET_D_ROOT/bad-repo"; mkfleetrepo "$BAD_REPO"
+chmod 000 "$BAD_REPO/.agent_tasks" 2>/dev/null || true
+
+rc_fl_d=0
+out_fl_d="$("$MASSOH" fleet --root "$FLEET_D_ROOT" 2>&1)" || rc_fl_d=$?
+# Restore permissions for cleanup
+chmod 755 "$BAD_REPO/.agent_tasks" 2>/dev/null || true
+
+check "T-FL-d exit 0 on unreadable repo"   "[ $rc_fl_d -eq 0 ]"
+# The unreadable repo still produces some output (the repo: line or a SKIP), the verb doesn't abort
+check "T-FL-d output produced (not silent abort)" "[ -n '$out_fl_d' ]"
+
+# --- T-FL-e: missing root exits 0 (FL2) ---
+rc_fl_e=0
+out_fl_e="$("$MASSOH" fleet --root "$TMP/nonexistent_fleet_dir_$$" 2>&1)" || rc_fl_e=$?
+check "T-FL-e missing root exits 0"        "[ $rc_fl_e -eq 0 ]"
+check "T-FL-e missing root prints message" "[ -n '$out_fl_e' ]"
+
+# --- T-FL-f: no config exits 0 (FL2) ---
+rc_fl_f=0
+# Run with no --root and a nonexistent tsv to exercise the no-config path
+MASSOH_FLEET_ROOT="" MASSOH_FLEET_TSV="$TMP/no-such-fleet.tsv" \
+  "$MASSOH" fleet >/dev/null 2>&1 || rc_fl_f=$?
+check "T-FL-f no config exits 0"           "[ $rc_fl_f -eq 0 ]"
+
+# --- T-FL-g: fleet.tsv registry parse (FL3) ---
+# Set up two valid repos
+TSV_REPO1="$TMP/fl_tsv_r1"; mkfleetrepo "$TSV_REPO1"
+TSV_REPO2="$TMP/fl_tsv_r2"; mkfleetrepo "$TSV_REPO2"
+# fleet.tsv: valid path, comment, blank, nonexistent path, valid path
+FLEET_TSV_G="$TMP/fleet_g.tsv"
+printf '%s\n' \
+  "$TSV_REPO1" \
+  "# this is a comment line" \
+  "" \
+  "/tmp/no-such-repo-fleet-g-$$" \
+  "$TSV_REPO2" > "$FLEET_TSV_G"
+
+rc_fl_g=0
+out_fl_g="$(MASSOH_FLEET_TSV="$FLEET_TSV_G" "$MASSOH" fleet 2>&1)" || rc_fl_g=$?
+check "T-FL-g tsv: 2 repos discovered" \
+  "[ \"\$(printf '%s\n' '$out_fl_g' | grep -c '^repo:')\" -eq 2 ]"
+check "T-FL-g tsv: exit 0"             "[ $rc_fl_g -eq 0 ]"
+
+# --- T-FL-h: no network / no secrets in fleet.sh (FL7) ---
+check "T-FL-h fleet.sh has no network/secret primitives" \
+  "! grep -qE 'curl|wget|nc |ssh |PLANE_API|SECRET|TOKEN' '$REPO_ROOT/lib/verbs/fleet.sh'"
+
+# --- T-FL-i: no source/eval of discovered-repo content (FL4) ---
+check "T-FL-i fleet.sh does not source/eval repo content" \
+  "! grep -qE '^\s*(source|\.) .*repo|eval.*repo|bash -c.*repo' '$REPO_ROOT/lib/verbs/fleet.sh'"
+
+# --- T-FL-j: rollup output correctness — both repos, blocked indicator (FL5/output) ---
+# Re-use REPO_A (has BLOCKED in AGENT_BACKLOG.md) and REPO_B from the T-FL-a setup
+out_fl_j="$("$MASSOH" fleet --root "$FLEET_ROOT_AB" 2>&1 || true)"
+check "T-FL-j output contains REPO_A path"  "printf '%s\n' '$out_fl_j' | grep -q 'repo-alpha'"
+check "T-FL-j output contains REPO_B path"  "printf '%s\n' '$out_fl_j' | grep -q 'repo-beta'"
+check "T-FL-j output shows blocked flag"    "printf '%s\n' '$out_fl_j' | grep -qi 'block'"
+
+# --- T-FL-k: dispatch + usage registration (FL9) ---
+rc_fl_k=0
+MASSOH_FLEET_ROOT="" MASSOH_FLEET_TSV="$TMP/no-such-fleet-k.tsv" \
+  "$MASSOH" fleet >/dev/null 2>&1 || rc_fl_k=$?
+check "T-FL-k 'massoh fleet' dispatches (exit 0 on empty run)" "[ $rc_fl_k -eq 0 ]"
+check "T-FL-k unknown cmd usage lists 'fleet'" \
+  "('$MASSOH' bogus_verb_fleet_$$ 2>&1 || true) | grep -q 'fleet'"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
