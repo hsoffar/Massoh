@@ -11,6 +11,20 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.15.0] - 2026-06-19
+### Added
+- **`massoh board --local [--out <dir>]`** — emit a self-contained HTML kanban (`agent-project/board.html`)
+  and an Obsidian-Kanban `BOARD.md` (`agent-project/BOARD.md`) from the same `_board_build_model` output.
+  **No network, no jq, no secret reads on the `--local` path** (BR4/BR7).
+  - `_board_html_escape` helper applies `&`→`&amp;`, `<`→`&lt;`, `>`→`&gt;`, `"`→`&quot;` (in order)
+    to every interpolated field before `printf` into HTML (BR2 — XSS prevention).
+  - BOARD.md cells sanitize `|`→`/` and newlines→space via `tr`/`sed`, no jq (BR3).
+  - Sentinel-based clobber policy: writes sentinel `<!-- massoh-generated -->` on first emit;
+    subsequent runs detect it and overwrite; refuses to overwrite hand-authored files (BR5).
+  - `--out <dir>` always overwrites within the specified directory (BR5).
+  - `--push plane` path is byte-identical; T17–T23 regression green (BR6).
+  - `_board_build_model` is reused (exactly 2 call sites: push + local; no second scanner) (BR1).
+
 ## [0.14.0] - 2026-06-19
 ### Added
 - **`agent-project/config.yml` (optional)** — project-level tunable overrides via a pure-bash
