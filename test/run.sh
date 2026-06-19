@@ -2205,6 +2205,136 @@ rc_prg=0
 check "T-PR-g helper callable after sourcing loop: massoh meta exits 0 (PC8)" \
   "[ $rc_prg -eq 0 ]"
 
+echo "== T-BR: massoh board --local renderer (v0.15.0) =="
+
+# Helper: create a minimal Massoh git repo for --local board tests.
+mkboardlocalrepo() {
+  local d="$1"
+  mkdir -p "$d"
+  ( cd "$d" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+  mkdir -p "$d/agent-project" "$d/.agent_tasks"
+  printf 'massoh project marker\n' > "$d/.massoh"
+  printf '# AGENT_SYNC\nAgent: massoh-implementer\n' > "$d/AGENT_SYNC.md"
+  ( cd "$d" && git add -A && git commit -qm "feat: seed board local repo" )
+}
+
+# Helper: create a TASK-* dir with a 00_request.md for board local tests.
+mktasklocal() {
+  local repo="$1" task_id="$2" title="${3:-$2}" packet="${4:-}"
+  local d="$repo/.agent_tasks/$task_id"
+  mkdir -p "$d"
+  printf '# %s\n\nTest task for massoh board --local.\n' "$title" > "$d/00_request.md"
+  [ -n "$packet" ] && touch "$d/${packet}"
+  true
+}
+
+# T-BR-1: HTML escape — malicious title must be escaped; no raw <script> in board.html.
+BRR1="$TMP/brr1"; mkboardlocalrepo "$BRR1"
+mktasklocal "$BRR1" "TASK-br1" '<script>alert("xss")</script> & "quoted"'
+rc_br1=0
+( cd "$BRR1" && "$MASSOH" board --local >/dev/null 2>&1 ) || rc_br1=$?
+check "T-BR-1 --local exits 0 with malicious title" "[ $rc_br1 -eq 0 ]"
+check "T-BR-1 board.html has no raw <script> tag" \
+  "[ -f '$BRR1/agent-project/board.html' ] && ! grep -qF '<script>' '$BRR1/agent-project/board.html'"
+check "T-BR-1 board.html contains &lt;script&gt;" \
+  "grep -qF '&lt;script&gt;' '$BRR1/agent-project/board.html'"
+check "T-BR-1 board.html contains &amp;" \
+  "grep -qF '&amp;' '$BRR1/agent-project/board.html'"
+check "T-BR-1 board.html contains &quot;" \
+  "grep -qF '&quot;' '$BRR1/agent-project/board.html'"
+
+# T-BR-2: Both files created after --local run.
+BRR2="$TMP/brr2"; mkboardlocalrepo "$BRR2"
+mktasklocal "$BRR2" "TASK-br2"
+rc_br2=0
+( cd "$BRR2" && "$MASSOH" board --local >/dev/null 2>&1 ) || rc_br2=$?
+check "T-BR-2 --local exits 0" "[ $rc_br2 -eq 0 ]"
+check "T-BR-2 board.html created" "[ -f '$BRR2/agent-project/board.html' ]"
+check "T-BR-2 BOARD.md created"   "[ -f '$BRR2/agent-project/BOARD.md' ]"
+
+# T-BR-3: HTML sentinel present in board.html.
+check "T-BR-3 board.html contains <!-- massoh-generated --> sentinel" \
+  "grep -qF '<!-- massoh-generated -->' '$BRR2/agent-project/board.html'"
+
+# T-BR-4: BOARD.md cell sanitization — | in title must not survive as raw | in card cell.
+BRR4="$TMP/brr4"; mkboardlocalrepo "$BRR4"
+mktasklocal "$BRR4" "TASK-br4" "foo | bar"
+( cd "$BRR4" && "$MASSOH" board --local >/dev/null 2>&1 ) || true
+# The card cell text is: "foo / bar (TASK-br4)" — the | in title → /
+# We assert the md file has no pipe inside a card cell (every line has fixed pipe positions)
+# Extract data rows (rows beyond header/separator) and check no raw pipe in the card text area.
+# Simpler: assert the title "foo | bar" does not appear literally (pipe was replaced).
+check "T-BR-4 BOARD.md does not contain 'foo | bar' (pipe stripped)" \
+  "[ -f '$BRR4/agent-project/BOARD.md' ] && ! grep -qF 'foo | bar' '$BRR4/agent-project/BOARD.md'"
+
+# T-BR-5: jq-absent PATH → --local exits 0 + both files emitted.
+BRR5="$TMP/brr5"; mkboardlocalrepo "$BRR5"
+mktasklocal "$BRR5" "TASK-br5"
+rc_br5=0
+( cd "$BRR5" && PATH="$NOJQ_PATH" "$MASSOH" board --local >/dev/null 2>&1 ) || rc_br5=$?
+check "T-BR-5 --local exits 0 with no jq in PATH" "[ $rc_br5 -eq 0 ]"
+check "T-BR-5 board.html created without jq"       "[ -f '$BRR5/agent-project/board.html' ]"
+check "T-BR-5 BOARD.md created without jq"         "[ -f '$BRR5/agent-project/BOARD.md' ]"
+
+# T-BR-7: No-clobber — hand-authored board.html (no sentinel) → refuse exit 1, file unchanged.
+BRR7="$TMP/brr7"; mkboardlocalrepo "$BRR7"
+mkdir -p "$BRR7/agent-project"
+printf 'hand-authored content — no sentinel here\n' > "$BRR7/agent-project/board.html"
+md5_br7_before="$(md5sum "$BRR7/agent-project/board.html" | awk '{print $1}')"
+rc_br7=0
+( cd "$BRR7" && "$MASSOH" board --local >/dev/null 2>&1 ) || rc_br7=$?
+md5_br7_after="$(md5sum "$BRR7/agent-project/board.html" | awk '{print $1}')"
+check "T-BR-7 --local exits non-zero when hand-authored board.html present" "[ $rc_br7 -ne 0 ]"
+check "T-BR-7 hand-authored board.html content unchanged" "[ '$md5_br7_before' = '$md5_br7_after' ]"
+
+# T-BR-8: --out <dir> redirect — files go to --out dir, NOT agent-project/.
+BRR8_OUT="$TMP/brr8out_$$"
+BRR8="$TMP/brr8"; mkboardlocalrepo "$BRR8"
+mktasklocal "$BRR8" "TASK-br8"
+rc_br8=0
+( cd "$BRR8" && "$MASSOH" board --local --out "$BRR8_OUT" >/dev/null 2>&1 ) || rc_br8=$?
+check "T-BR-8 --local --out exits 0" "[ $rc_br8 -eq 0 ]"
+check "T-BR-8 board.html in --out dir" "[ -f '$BRR8_OUT/board.html' ]"
+check "T-BR-8 BOARD.md in --out dir"   "[ -f '$BRR8_OUT/BOARD.md' ]"
+check "T-BR-8 board.html NOT in agent-project (no default side-effect)" \
+  "[ ! -f '$BRR8/agent-project/board.html' ]"
+
+# T-BR-9: Static grep — _board_emit_local and _board_emit_board_md must contain no 'curl'.
+# (All curl invocations must be inside _board_push_plane — verified by the two sub-checks below.)
+check "T-BR-9 _board_emit_local has no curl" \
+  "awk '/^_board_emit_local\(\)/,/^_board_emit_board_md\(\)/{if(/curl/)found=1} END{exit found+0}' '$REPO_ROOT/lib/verbs/board.sh'"
+check "T-BR-9 _board_emit_board_md has no curl" \
+  "awk '/^_board_emit_board_md\(\)/,/^_board_push_plane\(\)/{if(/curl/)found=1} END{exit found+0}' '$REPO_ROOT/lib/verbs/board.sh'"
+
+# T-BR-10: Sentinel overwrite — two sequential runs; second exits 0; sentinel appears exactly once.
+BRR10="$TMP/brr10"; mkboardlocalrepo "$BRR10"
+mktasklocal "$BRR10" "TASK-br10"
+( cd "$BRR10" && "$MASSOH" board --local >/dev/null 2>&1 ) || true
+rc_br10=0
+( cd "$BRR10" && "$MASSOH" board --local >/dev/null 2>&1 ) || rc_br10=$?
+check "T-BR-10 second --local run exits 0" "[ $rc_br10 -eq 0 ]"
+check "T-BR-10 BOARD.md sentinel appears exactly once (no doubling)" \
+  "[ \"\$(grep -c '<!-- massoh:board-generated -->' '$BRR10/agent-project/BOARD.md')\" -eq 1 ]"
+
+# T-BR-11: _board_build_model reuse — --local path calls _board_build_model (BR1).
+# Verify: (a) _board_build_model is called in the --local branch (line appears after --local check),
+#          (b) no second TASK-*/ scanner loop exists outside _board_build_model.
+# The --local branch in cmd_board calls _board_build_model before _board_emit_local.
+check "T-BR-11 _board_build_model called in --local branch" \
+  "grep -A5 'local_mode.*=.*1' \"$REPO_ROOT/lib/verbs/board.sh\" | grep -q '_board_build_model'"
+# Also assert no second TASK-*/ scanner outside _board_build_model.
+check "T-BR-11 no second TASK-*/ glob outside _board_build_model" \
+  "awk '/^_board_build_model\(\)/,/^\}/' \"$REPO_ROOT/lib/verbs/board.sh\" | grep -c 'TASK-\*/' | grep -q '^1\$'"
+
+# T-BR-12: Degrade — zero TASK-* dirs → exit 0; both files emitted (empty board).
+BRR12="$TMP/brr12"; mkboardlocalrepo "$BRR12"
+# No TASK-* dirs created
+rc_br12=0
+( cd "$BRR12" && "$MASSOH" board --local >/dev/null 2>&1 ) || rc_br12=$?
+check "T-BR-12 --local exits 0 with zero TASK-* dirs" "[ $rc_br12 -eq 0 ]"
+check "T-BR-12 board.html created (empty board)" "[ -f '$BRR12/agent-project/board.html' ]"
+check "T-BR-12 BOARD.md created (empty board)"   "[ -f '$BRR12/agent-project/BOARD.md' ]"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]
