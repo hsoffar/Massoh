@@ -10,6 +10,7 @@ Every meaningful task gets a folder `.agent_tasks/TASK-YYYY-MM-DD-short-slug/`. 
 | `02_ux_review.md` | UX (if user-facing) | flow, copy, UX invariants |
 | `03_architecture_safety.md` | architecture-safety | impact, risks, tests, **approved yes/no** |
 | `04_implementation_packet.md` | after approvals | the **license to code** — scope, criteria, flag, tests, rollback |
+| `req:` | optional | REQ-ID this task satisfies, e.g. `REQ-SAFE-001` (RMT: policy 14) |
 | `05_implementation_handoff.md` | implementer | files changed, tests run (verbatim), risks, reviewer handoff |
 | `06_review_result.md` | reviewer | approve / request-changes / reject + specific findings |
 

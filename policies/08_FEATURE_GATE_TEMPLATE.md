@@ -13,6 +13,8 @@ change → safe to merge + deploy even on an autonomous tick.
 - [ ] A **real test** covers both flag states (OFF = unchanged, ON = new behavior).
 - [ ] Enable path documented (how the owner turns it on for a tester / cohort).
 - [ ] Rollback = flip the flag OFF (no redeploy needed).
+- [ ] **RMT (when enabled):** flagged requirement has `flag: <key>` set in
+      `requirements/registry.yml`? (policy 14 §4.5)
 
 ## Why default-OFF + mirrored defaults
 The owner enables a feature deliberately, per audience, after seeing it. A client that hard-codes a

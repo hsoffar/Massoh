@@ -32,3 +32,10 @@ Classify each task as exactly one: `PRODUCT_SCOPE` · `UX_REVIEW` · `ARCHITECTU
 **No implementation without a license** (an approved `04_implementation_packet.md` or an approved
 issue with acceptance criteria). If neither exists, the task is not `IMPLEMENTATION` → route to
 `massoh-product-scope` first. See `04_CLAUDE_CODE_RULES.md` and `09_GUARDRAILS.md`.
+
+### Optional: REQ-ID link
+
+`/start-task REQ-<AREA>-<NNN> <description>` — when a REQ-ID is provided, the
+task packet records `req: REQ-<AREA>-<NNN>` in `04_implementation_packet.md`
+(see policy 11). The implementer updates the registry entry's `satisfied_by`
+and `status` fields after merge. Nothing fires automatically.

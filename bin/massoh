@@ -64,7 +64,7 @@ cmd_install() {
   # skills (owned names)
   for d in "$MASSOH_HOME"/claude/skills/*/; do wire "${d%/}" "$CLAUDE_DIR/skills/$(basename "$d")"; done
   # engine (read on demand)
-  for p in OPERATING_SYSTEM.md policies templates docs manifest.yml VERSION lib/verbs; do
+  for p in OPERATING_SYSTEM.md policies templates docs manifest.yml VERSION lib/verbs scripts; do
     [ -e "$MASSOH_HOME/$p" ] && wire "$MASSOH_HOME/$p" "$CLAUDE_DIR/agent-os/$p"; done
   add_block
   say "done. enabled globally; dormant until a repo opts in (massoh on)."
@@ -145,7 +145,7 @@ cmd_doctor() {
   for s in start-task sync close-task history-cleanup; do
     if [ -e "$CLAUDE_DIR/skills/$s" ]; then say "  ok   skill $s"; else say "  MISS skill $s"; problems=$((problems+1)); fi
   done
-  for p in OPERATING_SYSTEM.md policies templates docs manifest.yml VERSION; do
+  for p in OPERATING_SYSTEM.md policies templates docs manifest.yml VERSION scripts; do
     if [ -e "$CLAUDE_DIR/agent-os/$p" ]; then say "  ok   agent-os/$p"; else say "  MISS agent-os/$p"; problems=$((problems+1)); fi
   done
   # MB4: verify lib/verbs/ presence (added in v0.11.0)

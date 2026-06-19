@@ -320,7 +320,7 @@ def run_checks(
                 # C07: flag value not in any flag_source
                 if flag not in all_flag_keys:
                     errors.append(
-                        f"C07 {req['id']}: flag {flag!r} not found in any configured flag_source"
+                        f"C07 {req.get('id', '<no-id>')}: flag {flag!r} not found in any configured flag_source"
                     )
 
         # C11: flag in a source with no registry entry

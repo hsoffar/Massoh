@@ -19,11 +19,11 @@ global_install:
     dest: ~/.claude/agents/
     pattern: massoh-*.md
     source: claude/agents/
-  # skills: copied/symlinked under their own names (start-task, sync, close-task, history-cleanup)
+  # skills: copied/symlinked under their own names (start-task, sync, close-task, history-cleanup, req-check)
   - kind: dir
     dest: ~/.claude/skills/
     source: claude/skills/
-    owns: [start-task, sync, close-task, history-cleanup]
+    owns: [start-task, sync, close-task, history-cleanup, req-check]
   # the engine the agents read on demand
   - kind: dir
     dest: ~/.claude/agent-os/
@@ -34,6 +34,11 @@ global_install:
     dest: ~/.claude/agent-os/lib/verbs/
     source: lib/verbs
     # NOTE: listed in the `for p in …` loop in bin/massoh:cmd_install alongside the engine artifacts above.
+  # RMT opt-in capability (v0.17.0)
+  - kind: dir
+    dest: ~/.claude/agent-os/scripts/
+    source: scripts/
+    owns: [req-check]
 
 # Per-repo scaffold created by `massoh on` (NEVER overwritten — created only if missing):
 project_scaffold:
@@ -62,3 +67,6 @@ project_scaffold:
     # NOTE: .env.massoh and .agent_tasks/.board-map.tsv are runtime artifacts managed by
     # `massoh board` at run time — they are intentionally NOT listed here (never installed
     # by `massoh on`; gitignored by the verb before any write).
+    # RMT opt-in (copy templates; project activates by filling them in)
+    - { dest: agent-project/requirements.config.yml,   source: templates/requirements.config.template.yml }
+    - { dest: requirements/registry.yml,               source: templates/requirements.registry.template.yml }
