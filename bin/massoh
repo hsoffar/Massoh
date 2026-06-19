@@ -211,8 +211,9 @@ case "$cmd" in
   board)     shift || true; cmd_board "$@" ;;
   intake)    shift || true; cmd_intake "$@" ;;
   fleet)     shift || true; cmd_fleet "$@" ;;
+  agents-md) shift || true; cmd_agents_md "$@" ;;
   version|--version|-v) cmd_version ;;
   work)      shift; cmd_work "${1:-}" ;;
   uninstall) cmd_uninstall ;;
-  *) die "unknown command '$cmd'. verbs: install update on off enable disable status doctor discover review standup plan learn recommend ledger meta cron gate board intake fleet version work uninstall [--link]" ;;
+  *) die "unknown command '$cmd'. verbs: install update on off enable disable status doctor discover review standup plan learn recommend ledger meta cron gate board intake fleet agents-md version work uninstall [--link]" ;;
 esac

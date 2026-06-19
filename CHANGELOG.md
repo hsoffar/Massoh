@@ -11,6 +11,14 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.16.0] - 2026-06-19
+### Added
+- **`massoh agents-md`** — emit a concise `AGENTS.md` team-index at the repo root: sentinel on
+  line 1, one-line header, 7-row table (Role | Description | Edits code?), workflow pointer.
+  Clobber-guard: overwrites only generated files (sentinel detected); refuses hand-authored files
+  (exit 1); idempotent byte-identical on re-run. Degrades exit 0 with message if no role files
+  found (AM1). Frontmatter parsed as static data only — no source/eval (AM3/AM8).
+
 ## [0.15.0] - 2026-06-19
 ### Added
 - **`massoh board --local [--out <dir>]`** — emit a self-contained HTML kanban (`agent-project/board.html`)
