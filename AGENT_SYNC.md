@@ -4,20 +4,22 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-19 (TASK-2026-06-19-license-gate — **MERGED** PR #16 → main `fc6dc0d`, VERSION 0.9.0; board now unblocked, awaiting owner sign-off on bin/massoh)
+Last updated: 2026-06-19 (TASK-2026-06-19-massoh-board — owner SIGNED OFF on bin/massoh + manifest.yml; arch-safety CONDITIONAL YES, 26 conditions BG1–BG26; `04` issued; routed to massoh-implementer, target VERSION 0.10.0)
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**None in flight.** `TASK-2026-06-19-massoh-board` is scoped (BUILD) + arch-safety pending —
-**now unblocked** by the license-gate merge, but needs **owner sign-off on `bin/massoh`** before a
-`04` issues. Pick it up via arch-safety, or start another backlog item.
+**TASK-2026-06-19-massoh-board** — **LICENSED, IN IMPLEMENTATION**. Owner signed off on `bin/massoh`
++ `manifest.yml` (Massoh's first credential + outbound-network surface); arch-safety CONDITIONAL YES
+with 26 conditions BG1–BG26; `04_implementation_packet.md` issued. Implementer building
+`massoh board --push plane` on `feat/massoh-board`: internal task model → Plane issue upsert,
+append-only `.board-map.tsv`, secret discipline (BG1–BG7), network degrade (BG8–BG15), jq guard.
+Must deliver T17–T23 (suite 236 → ≥263 green). Routed to `massoh-implementer`.
 
 **Last shipped:** TASK-2026-06-19-license-gate — `massoh gate on/off` mechanical license-to-code
-enforcement (pre-push hook + CI checker). **Merged PR #16 → `fc6dc0d`, VERSION 0.9.0**, 236/236 green,
-G1–G14 independently verified by reviewer-qa.
+enforcement. **Merged PR #16 → `fc6dc0d`, VERSION 0.9.0**, 236/236 green, G1–G14 verified.
 
 ## Open questions (owner decision needed)
 | Question | Raised | Context |
@@ -67,6 +69,8 @@ G1–G14 independently verified by reviewer-qa.
 | 2026-06-19 | TASK-2026-06-19-license-gate: **Owner SIGNED OFF** on editing `bin/massoh` + `manifest.yml` (reviewed all 14 conditions G1–G14 + 18 tests T16a–T16r) → `04_implementation_packet.md` issued; route to massoh-implementer | owner |
 | 2026-06-19 | TASK-2026-06-19-license-gate: **APPROVE** — G1–G14 all independently verified (line refs in 06_review_result); 236/236 green (independently run); scope clean; no deferred features built; safety-critical files untouched by existing verbs; NB-1 manifest documentation ambiguity (non-blocking); NB-2 T16n variable naming (non-blocking) | reviewer-qa |
 | 2026-06-19 | TASK-2026-06-19-massoh-board: product-scope **BUILD** — `massoh board --push plane` verb; internal task model + Plane upsert; push-only (no two-way sync); append-only local id-map `.agent_tasks/.board-map.tsv`; task-level state in MVP (no real-time agent telemetry); config via env vars + gitignored `.env.massoh`; jq required (flagged as explicit dependency with startup guard); 12 acceptance criteria B1–B12; BLOCKED until license-gate merges (avoid parallel safety-critical bin/massoh edits); route to massoh-architecture-safety (first outbound-network + first secret-handling surface; owner sign-off on bin/massoh required) | product-scope |
+| 2026-06-19 | TASK-2026-06-19-massoh-board: arch/safety **CONDITIONAL YES** — blocked pending owner sign-off on `bin/massoh`; 26 conditions BG1–BG26 (BG1–7 secret handling: token never in tracked file/output, header-only, gitignore-before-write, exit1 on missing; BG8–15 outbound network: curl timeouts, degrade exit0 no map corruption, non-2xx=fail, HTTPS, bounded retry, partial-push retry, no exfil; BG16–21 local writes append-only/idempotent/sanitized + manifest lockstep; BG22 jq guard confined to cmd_board; BG23–24 sign-off+lockstep; BG25 read-only isolation; BG26 issue body bounded + jq @json); 27 tests T17–T23; target total 263; highest risk = PLANE_API_TOKEN exposure (T17b live assertion) | architecture-safety |
+| 2026-06-19 | TASK-2026-06-19-massoh-board: **Owner SIGNED OFF** on editing `bin/massoh` + `manifest.yml` (first credential + outbound-network surface; reviewed 26 conditions BG1–BG26 + 27 tests T17–T23) → `04_implementation_packet.md` issued; route to massoh-implementer | owner |
 | 2026-06-19 | TASK-2026-06-19-license-gate: **MERGED** (squash) PR #16 → main `fc6dc0d`; VERSION 0.9.0 shipped; board now unblocked. Deploy to `~/.claude` via `massoh update` when owner chooses | owner |
 | 2026-06-19 | Backlog additions: **RMT** (requirements traceability, PROPOSE-ONLY engine capability) + **Fleet layer** (multi-repo dashboard + cross-repo lessons + self-curing engine, EPIC) captured to AGENT_BACKLOG/NOW_NEXT + briefs under `agent-project/briefs/` | owner |
 
@@ -84,7 +88,7 @@ None.
 | TASK-2026-06-17-massoh-ledger | merged | DONE — PR #14 |
 | TASK-2026-06-17-massoh-meta | merged | DONE — PR #15 → `be97ed0` |
 | TASK-2026-06-19-license-gate | merged | DONE — PR #16 → main `fc6dc0d`, VERSION 0.9.0 |
-| TASK-2026-06-19-massoh-board | 01_product_scope | BUILD — `massoh board --push plane`; **unblocked**; needs owner sign-off on bin/massoh → arch-safety |
+| TASK-2026-06-19-massoh-board | 04_implementation_packet | LICENSED — owner signed off; implementer building (BG1–BG26, T17–T23) |
 
 ## Last handoff
 ```
