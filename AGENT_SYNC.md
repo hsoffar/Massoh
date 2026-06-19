@@ -4,7 +4,7 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-19 (24h-queue fan-out — **MERGED 7**: CI #19 · intake #20 v0.12 · fleet #21 v0.13 · profiles #22 v0.14 (+ license-gate/board/modularize earlier). #5 DEFERRED. #8 renderer + #10 AGENTS.md LICENSED; firing #8 implementer (→ v0.15.0). Remaining: #7 RMT, #11 schema⚠sign-off, #12 bats. Follow-up noted: verb load-order fragility (NB-1, profiles review).)
+Last updated: 2026-06-19 (24h-queue fan-out — **MERGED 8**: …profiles #22 v0.14 · board-renderer #23 v0.15. #5 DEFERRED. #10 AGENTS.md LICENSED; firing #10 implementer (→ v0.16.0). Remaining: #7 RMT (big, via meta-engineer), #11 schema⚠sign-off, #12 bats (last — collides w/ test/run.sh). Follow-up: verb load-order fragility NB-1.)
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
@@ -90,6 +90,7 @@ on green; PRs reviewable post-hoc. See `AGENT_BACKLOG.md` §24h-plan.
 | 2026-06-19 | TASK-2026-06-19-fleet-rollup (#6): **MERGED** (squash) PR #21 → main `7d1b7d1`, VERSION 0.13.0. | owner |
 | 2026-06-19 | #9 profiles: arch/safety **APPROVED** (PC1–PC9; pure-bash parser, no dep; manifest untouched; target 334) → 04 licensed. #8 board-renderer: arch/safety **APPROVED** (BR1–BR8; HTML-escape every field, jq isolated to --push, sentinel clobber-guard; target +12) → 04 licensed. Both batch-authorized. | architecture-safety |
 | 2026-06-19 | TASK-2026-06-19-profiles (#9): **APPROVE** — PC1–PC9 all independently verified (line refs in 06_review_result); 361/361 green (self-witnessed twice); no-config byte-identical proven (T-PR-a md5sum match); scope clean (6 files: lib/verbs/_config.sh new, lib/verbs/meta.sh +2 call sites, bin/massoh-cron +2 lines, VERSION, CHANGELOG, test/run.sh +17); manifest.yml/templates/bin/massoh/AGENT_SYNC.md/AGENT_BACKLOG.md untouched; T-PR-a–g all substantive; NB-1 PC8 handoff justification inaccurate (board.sh sorts before _config.sh in en_US.UTF-8; safe because board.sh has no config_get calls — fix load-order explicitly in next verb-loop pass); NB-2 2-tier precedence deviation non-blocking (arch-safety §PC5 approved; documented in CHANGELOG + _config.sh header). | reviewer-qa |
+| 2026-06-19 | TASK-2026-06-19-board-renderer (#8): **APPROVE** — BR1–BR8 all independently verified (line refs in 06_review_result); 389/389 green (self-witnessed twice); XSS proof: no raw `<script>` in board.html, `&lt;script&gt;`/`&amp;`/`&quot;` confirmed present; clobber-guard proof: exit 1 + md5sum identical on hand-authored file; `_board_push_plane` byte-identical (diff clean); scope clean (4 files: lib/verbs/board.sh additive, test/run.sh +28 T-BR, VERSION, CHANGELOG); AGENT_SYNC.md/AGENT_BACKLOG.md/manifest.yml/templates/bin/massoh untouched; T-BR-11 deviation non-blocking (packet "exactly 2" premise wrong — 3 pre-existing call sites on main; new --local adds 4th; no second scanner confirmed); NB-1 T-BR-11 deviation (non-blocking, correctly pivots to spirit test); NB-2 `$ts` unescaped (non-issue, ASCII-safe date format). | reviewer-qa |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -112,37 +113,42 @@ None.
 | TASK-2026-06-19-auto-ledger (#5) | 03_architecture_safety | DEFERRED — hook lacks token/time data; 3 re-entry conditions |
 | TASK-2026-06-19-fleet-rollup (#6) | merged | DONE — PR #21 → main `7d1b7d1`, VERSION 0.13.0 |
 | TASK-2026-06-19-profiles (#9) | 06_review_result | APPROVED — reviewer-qa APPROVE; 361/361 green; ready to merge (→ v0.14.0) |
-| TASK-2026-06-19-board-renderer (#8) | 04_implementation_packet | LICENSED — queued (BR1–BR8, → v0.15.0) |
+| TASK-2026-06-19-board-renderer (#8) | 06_review_result | APPROVED — reviewer-qa APPROVE; 389/389 green; ready to merge (→ v0.15.0) |
 
 ## Last handoff
 ```
 Agent: massoh-reviewer-qa
 Mode: REVIEW_QA
-Task: TASK-2026-06-19-profiles (#9) -- profiles + config.yml (v0.14.0)
+Task: TASK-2026-06-19-board-renderer (#8) -- massoh board --local renderer (v0.15.0)
 Status: APPROVED. 06_review_result.md written.
-Branch: feat/profiles (working tree, uncommitted -- per batch-auth terms)
-Decision: APPROVE. PC1-PC9 all independently verified. 361/361 green (self-witnessed twice).
-  No-config byte-identical proven: T-PR-a md5sum match (no-config == empty-config), output
-  shows 2x / >=3 (built-in defaults active).
-  PC2: case guards at meta.sh:32,35 + cron:21. T-PR-c green (not_a_number -> 2x).
-  PC3: grep yq/jq/python -> empty. T-PR-d green (complex YAML -> all defaults).
-  PC4: _config.sh:30-37 case pattern; T-PR-e green (plane_api_token -> WARNING + default).
-  PC5: 5 || true guard sites independently read.
-  PC6: grep count = 3. T-PR-f green.
-  PC7: 2-tier MVP; T-PR-b green. Global tier deferred (arch-safety §PC5). Non-blocking.
-  PC8: load order safe (board.sh has no config_get calls). NB-1 noted (non-blocking).
-  PC9: VERSION=0.14.0; cron diff=2 lines; manifest diff empty.
-  Scope: 6 files only. manifest.yml/templates/bin/massoh/AGENT_SYNC.md/AGENT_BACKLOG.md untouched.
-  Safety-critical files untouched (all git diffs empty).
+Branch: feat/board-renderer (working tree, uncommitted -- per batch-auth terms)
+Decision: APPROVE. BR1-BR8 all independently verified. 389/389 green (self-witnessed twice).
+  BR1: single TASK-*/ for-loop at board.sh:209 only (inside _board_build_model); 4 call sites
+       (3 pre-existing + 1 new --local); T-BR-11 deviation non-blocking (see 06_review_result).
+  BR2: _board_html_escape at board.sh:293-296 (& first); 7 fields escaped (esc_stage/tid/title/
+       desc/agent/priority/cost at lines 394,403-408); XSS proof: no raw <script> + entities present.
+  BR3: _board_safe_md_cell at board.sh:300-304; applied to safe_id/safe_title (lines 471-472).
+  BR4: jq guard moved to board.sh:109 (after --local early-return at line 78); awk-range checks
+       of _board_emit_local + _board_emit_board_md -> zero jq calls. T-BR-5 green (no jq in PATH).
+  BR5: _board_write_safe at board.sh:310-345; sentinel check (line 331); refuse+return 1 (lines
+       336-340); --out force=1 (lines 323-327). Clobber proof: exit 1, md5sum identical.
+  BR6: diff _board_push_plane wt vs HEAD -> BYTE-IDENTICAL. T17-T23 all 28 checks green.
+  BR7: --local returns at line 78; .env.massoh source at line 86 not reached; no curl in emitters.
+  BR8: || true at lines 295, 303; grep -qF with 2>/dev/null at line 331; mkdir -p at line 321.
+  Scope: 4 files only. manifest.yml/templates/bin/massoh/AGENT_SYNC.md/AGENT_BACKLOG.md untouched.
 Checks run (self-witnessed):
-  bash test/run.sh (x2) -> ALL GREEN -- 361 checks passed. PASS.
-  grep massoh_config_get lib/verbs/ bin/massoh-cron | grep -v _config.sh | wc -l -> 3. PASS.
-  grep yq|python|jq _config.sh -> empty. PASS.
-  git diff HEAD -- bin/massoh manifest.yml templates/ AGENT_SYNC.md AGENT_BACKLOG.md -> empty. PASS.
+  bash test/run.sh (x2) -> ALL GREEN -- 389 checks passed. PASS.
+  grep "for d in.*TASK-\*/" lib/verbs/board.sh -> line 209 only. PASS.
+  awk-range _board_emit_local | grep jq (non-comment) -> empty. PASS.
+  awk-range _board_emit_board_md | grep jq (non-comment) -> empty. PASS.
+  diff _board_push_plane (wt vs HEAD) -> BYTE-IDENTICAL. PASS.
+  XSS proof: no raw <script>; &lt;script&gt;/&amp;/&quot; confirmed. PASS.
+  Clobber proof: exit 1 + md5sum identical on hand-authored file. PASS.
+  git diff HEAD -- manifest.yml templates/ AGENT_SYNC.md AGENT_BACKLOG.md bin/massoh -> empty. PASS.
 Non-blocking:
-  NB-1: board.sh sorts before _config.sh in en_US.UTF-8 glob order; board.sh has no config_get
-        calls so safe; PC8 handoff justification inaccurate. Fix in next verb-loop arch-safety pass.
-  NB-2: 2-tier vs 3-tier -- arch-safety §PC5 approved 2-tier MVP; documented in product + CHANGELOG.
-Next recommended agent: orchestrator (auto-merge feat/profiles per auto-merge-on-green policy)
-Next action: orchestrator squash-merges feat/profiles PR -> main; owner runs massoh update
+  NB-1: T-BR-11 deviation -- packet "exactly 2 call sites" premise was wrong (3 pre-existing);
+        implementer's pivot to "no second scanner" test is correct and sufficient. Non-blocking.
+  NB-2: $ts in HTML body is unescaped -- ASCII-safe (date -u ISO-8601 output). Non-issue.
+Next recommended agent: orchestrator (auto-merge feat/board-renderer per auto-merge-on-green policy)
+Next action: orchestrator squash-merges feat/board-renderer PR -> main; VERSION 0.15.0 shipped
 ```
