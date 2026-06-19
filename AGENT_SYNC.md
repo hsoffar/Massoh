@@ -4,7 +4,7 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-19 (24h-queue fan-out — **MERGED**: #2 CI (PR #19), #4 intake (PR #20, v0.12.0). **#5 auto-ledger DEFERRED** (SubagentStop hook lacks token/time data). Driving #6 fleet rollup next; auto-merge-on-green active.)
+Last updated: 2026-06-19 (24h-queue fan-out — **MERGED**: #2 CI (#19), #4 intake (#20, v0.12.0), #6 fleet rollup (#21, v0.13.0, 344 green). #5 auto-ledger DEFERRED. #9 profiles + #8 renderer LICENSED. Firing #9 implementer (→ v0.14.0). Remaining scope: #7 RMT, #10 AGENTS.md, #11 schema⚠sign-off, #12 bats.)
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
@@ -86,6 +86,9 @@ on green; PRs reviewable post-hoc. See `AGENT_BACKLOG.md` §24h-plan.
 | 2026-06-19 | TASK-2026-06-19-dogfood-ci (#2): **MERGED** PR #19 → main `323b361` — GitHub Actions runs test/run.sh on PR+push (fails-on-red). Exempt-path additive; self-reviewed (trivial CI yaml). | owner |
 | 2026-06-19 | TASK-2026-06-19-intake (#4): **MERGED** (squash) PR #20 → main `88c1e86`, VERSION 0.12.0; 327/327 green; append-only proven. | owner |
 | 2026-06-19 | TASK-2026-06-19-auto-ledger (#5): **DEFER** (arch-safety, not approved) — SubagentStop hook payload has no token_usage/duration/task-id (verified vs hook docs), and no SubagentStart to diff time; building it would write fake `0 0` rows and silently poison ledger/meta. Re-entry: (A) harness adds token+timing to SubagentStop, (B) SubagentStart event lands (wall-time only), (C) orchestrator calls `massoh ledger add` at stage completion (doable today — has real token+clock data). | architecture-safety |
+| 2026-06-19 | TASK-2026-06-19-fleet-rollup (#6): **APPROVE** — FL1–FL11 all independently verified (line refs in 06_review_result); runtime write-isolation proof: REPO_A md5=17085353bc1cfdcec57d69ee29732988 identical before/after, REPO_B md5=0bdc7d6490ae47630d23cb27b36cf118 identical before/after; 344/344 green (independently run); T-FL-a/b substantive (git-init'd repos, real md5 snapshot); T-MB-f update legitimate additive (fleet added to usage string, assertion still byte-exact); scope clean (5 files: lib/verbs/fleet.sh new, bin/massoh +2 lines, VERSION, CHANGELOG, test/run.sh +T-FL); AGENT_BACKLOG.md + AGENT_SYNC.md untouched; manifest.yml untouched; safety-critical files untouched; NB-1 arch-safety doc FL11 text says 0.11.0→0.12.0 (stale; implementation correct at 0.13.0; non-blocking). | reviewer-qa |
+| 2026-06-19 | TASK-2026-06-19-fleet-rollup (#6): **MERGED** (squash) PR #21 → main `7d1b7d1`, VERSION 0.13.0. | owner |
+| 2026-06-19 | #9 profiles: arch/safety **APPROVED** (PC1–PC9; pure-bash parser, no dep; manifest untouched; target 334) → 04 licensed. #8 board-renderer: arch/safety **APPROVED** (BR1–BR8; HTML-escape every field, jq isolated to --push, sentinel clobber-guard; target +12) → 04 licensed. Both batch-authorized. | architecture-safety |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -106,30 +109,36 @@ None.
 | TASK-2026-06-19-dogfood-ci (#2) | merged | DONE — PR #19 → main `323b361` |
 | TASK-2026-06-19-intake (#4) | merged | DONE — PR #20 → main `88c1e86`, VERSION 0.12.0 |
 | TASK-2026-06-19-auto-ledger (#5) | 03_architecture_safety | DEFERRED — hook lacks token/time data; 3 re-entry conditions |
-| TASK-2026-06-19-fleet-rollup (#6) | 04_implementation_packet | LICENSED — implementer next (→ v0.13.0) |
+| TASK-2026-06-19-fleet-rollup (#6) | merged | DONE — PR #21 → main `7d1b7d1`, VERSION 0.13.0 |
+| TASK-2026-06-19-profiles (#9) | 04_implementation_packet | LICENSED — implementer building (PC1–PC9, → v0.14.0) |
+| TASK-2026-06-19-board-renderer (#8) | 04_implementation_packet | LICENSED — queued (BR1–BR8, → v0.15.0) |
 
 ## Last handoff
 ```
 Agent: massoh-reviewer-qa
 Mode: REVIEW_QA
-Task: TASK-2026-06-19-intake — massoh intake verb (v0.12.0)
+Task: TASK-2026-06-19-fleet-rollup -- massoh fleet verb (v0.13.0)
 Status: APPROVED. 06_review_result.md written.
-Branch: feat/intake (working tree, uncommitted — per batch-auth terms)
-Decision: APPROVE. IK1–IK11 all independently verified. 327/327 green (self-witnessed, twice).
-  Append-only proven at runtime: Queue/Done/Frozen rows md5-identical before/after intake run
-  (5e6b42fb6a02dfe980f43edc76b295ad before = after). grep -c 'sed -i' = 0. No > file, no mv,
-  no awk. Single printf >> on line 99 is the only BACKLOG write. MEMORY write || true on line 107.
+Branch: feat/fleet-rollup (working tree, uncommitted -- per batch-auth terms)
+Decision: APPROVE. FL1-FL11 all independently verified. 344/344 green (self-witnessed).
+  Write-isolation proven at runtime: REPO_A md5 17085353bc1cfdcec57d69ee29732988 identical
+  before/after; REPO_B md5 0bdc7d6490ae47630d23cb27b36cf118 identical before/after.
+  Static grep: no write operator (>, >>, tee, cp, mv, mkdir, touch) targets any repo-path var.
+  FL7 clean: curl/wget/nc/ssh/gh/TOKEN grep empty.
+  FL4 clean: source/eval/bash -c grep (non-comment) empty.
+  FL9: exactly 2 lines in bin/massoh (dispatch + usage). Verified via git diff HEAD.
+  FL10: manifest.yml git diff empty. PASS.
+  FL11: VERSION=0.13.0, CHANGELOG [0.13.0] section present.
   Scope clean: 5 files only. AGENT_BACKLOG.md + AGENT_SYNC.md untouched in working tree.
-  Safety-critical files untouched. T-IK-a–k all substantive.
+  Safety-critical files untouched. T-FL-a/b substantive. T-MB-f legitimate additive update.
 Checks run (self-witnessed):
-  bash test/run.sh → ALL GREEN — 327 checks passed (run twice). PASS.
-  grep -c 'sed -i' lib/verbs/intake.sh → 0. PASS.
-  grep bare '>'/mv/awk in intake.sh → empty. PASS.
-  Runtime append-only proof (temp repo) → Queue/Done/Frozen identical, md5 match. PASS.
-  git diff HEAD -- AGENT_BACKLOG.md → empty. PASS.
-  git diff HEAD -- manifest.yml templates/ agent-os/policies/ NON_NEGOTIABLES.md → empty. PASS.
-  bin/massoh diff → exactly +1 dispatch line + usage string update. PASS.
-Non-blocking: NB-1 T-IK-d ≤210 (actual idea = 200); NB-2 double-if pattern; NB-3 doctor MISS.
-Next recommended agent: orchestrator (auto-merge feat/intake per auto-merge-on-green policy)
-Next action: orchestrator squash-merges feat/intake PR → main; owner runs massoh update
+  bash test/run.sh -> ALL GREEN -- 344 checks passed. PASS.
+  grep write operators fleet.sh (non-comment, non-/dev/null) -> 4 printf string literal hits only. PASS.
+  grep curl/wget/nc/ssh/gh/TOKEN fleet.sh -> empty. PASS.
+  grep source/eval/bash -c fleet.sh (non-comment) -> empty. PASS.
+  Runtime write-isolation proof -> md5 identical before/after. PASS.
+  git diff HEAD -- AGENT_BACKLOG.md AGENT_SYNC.md manifest.yml -> empty. PASS.
+Non-blocking: NB-1 arch-safety doc FL11 text says 0.11.0->0.12.0 (stale; product correct at 0.13.0).
+Next recommended agent: orchestrator (auto-merge feat/fleet-rollup per auto-merge-on-green policy)
+Next action: orchestrator squash-merges feat/fleet-rollup PR -> main; owner runs massoh update
 ```

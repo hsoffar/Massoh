@@ -30,7 +30,7 @@ Ordered by value × dependency. **`bin/massoh` is the serialization bottleneck**
 | 3 | P1 | **Modularize `bin/massoh` → `lib/verbs/*.sh`** — the leverage move | Y | **DONE** — PR #18, v0.11.0 |
 | 4 | P1 | **`massoh intake` (idea triage)** — append-only inbox + priority. See [[massoh-idea-intake]] | Y | **DONE** — PR #20, v0.12.0 |
 | 5 | P1 | **Auto-ledger via SubagentStop hook** — capture tokens/time per stage | Y+hook | **DEFERRED** — hook payload lacks token/time/task-id; re-entry A/B/C in AGENT_SYNC |
-| 6 | P1 | **Fleet slice 2** — repo registry + read-only multi-repo rollup. Slice of [[massoh-fleet-vision]]; brief `agent-project/briefs/fleet-multi-repo-self-curing.md` | Y | **DOING** — licensed, implementer next (→ v0.13.0) |
+| 6 | P1 | **Fleet slice 2** — repo registry + read-only multi-repo rollup. Slice of [[massoh-fleet-vision]]; brief `agent-project/briefs/fleet-multi-repo-self-curing.md` | Y | **DONE** — PR #21, v0.13.0 |
 | 7 | P1 | **RMT slice 1** — policy doc + templates + `req-check` reference + skill (PROPOSE-ONLY). Spec `agent-project/briefs/RMT-requirements-traceability.md` | N (mostly) | TODO |
 | 8 | P2 | **`board` local renderer** (HTML/Obsidian) — offline slice, no Plane needed | Y | TODO — after #1 merges |
 | 9 | P2 | **Profiles + single `config.yml`** — archetypes; consolidate config | Y | TODO |
