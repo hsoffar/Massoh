@@ -34,7 +34,7 @@ Ordered by value × dependency. **`bin/massoh` is the serialization bottleneck**
 | 7 | P1 | **RMT slice 1** — policy doc + templates + `req-check` reference + skill (PROPOSE-ONLY). Spec `agent-project/briefs/RMT-requirements-traceability.md` | N (mostly) | TODO |
 | 8 | P2 | **`board` local renderer** (HTML/Obsidian) — offline slice, no Plane needed | Y | **DONE** — PR #23, v0.15.0 |
 | 9 | P2 | **Profiles + single `config.yml`** — archetypes; consolidate config | Y | **DONE** — PR #22, v0.14.0 |
-| 10 | P2 | **Emit `AGENTS.md`** from the roles — multi-harness portability | Y | TODO (re-entry: ≥2 repos through gates) |
+| 10 | P2 | **Emit `AGENTS.md`** from the roles — multi-harness portability | Y | **DONE** — PR #24, v0.16.0 |
 | 11 | P2 | **Rename `manifest.yml version:` → `schema_version:`** — disambiguate from product VERSION | Y+manifest | TODO |
 | 12 | P3 | **`test/run.sh` → bats** + commit-conv ratio in discover | N (tests) | TODO |
 
