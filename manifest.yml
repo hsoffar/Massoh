@@ -1,11 +1,11 @@
 # manifest.yml — what `massoh install` writes into ~/.claude (for status + clean uninstall)
-# version: 1
+# schema_version: 1
 #
 # Everything Massoh adds to the LIVE global config (~/.claude) is namespaced + listed here so
 # `massoh status` can verify it and `massoh uninstall` can remove EXACTLY what was added — after a
 # timestamped backup. Massoh never edits the user's own agents/skills, only its own `massoh-*` ones.
 
-version: 1
+schema_version: 1
 namespace: massoh
 
 global_install:

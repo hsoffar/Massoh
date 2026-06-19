@@ -17,6 +17,19 @@ die()  { printf 'massoh: %s\n' "$*" >&2; exit 1; }
 mver() { cat "$MASSOH_HOME/VERSION" 2>/dev/null || echo unknown; }
 msha() { git -C "$MASSOH_HOME" rev-parse --short HEAD 2>/dev/null || echo '?'; }
 
+# SR2: read schema_version from manifest.yml; fallback to deprecated version: key (one-release compat).
+# Safe under set -euo pipefail: all grep/awk guarded || true; never empty/crash.
+manifest_schema_ver() {
+  local f="$MASSOH_HOME/manifest.yml"
+  local v
+  v=$(grep -m1 '^schema_version:' "$f" 2>/dev/null | awk '{print $2}') || true
+  if [ -z "$v" ]; then
+    v=$(grep -m1 '^version:' "$f" 2>/dev/null | awk '{print $2}') || true
+    [ -n "$v" ] && printf "  note: manifest uses deprecated 'version:' key; update to 'schema_version:' (compat until v0.19)\n" >&2 || true
+  fi
+  printf '%s' "${v:-unknown}"
+}
+
 backup_claude() {
   [ -d "$CLAUDE_DIR" ] || return 0
   local b="$CLAUDE_DIR/.massoh-backups/$(date +%Y%m%d-%H%M%S)"
