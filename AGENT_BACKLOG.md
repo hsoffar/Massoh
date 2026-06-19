@@ -93,5 +93,5 @@ slices 2+), Fleet layer (slices 3–4: cross-repo lessons pool → engine self-c
 |---|---|---|---|
 | 13 | P0 | Harden T6 doctor update-check — network-flaky, fails in CI; make offline-safe or skip when no network | **DONE** — PR #29 (offline-deterministic) |
 | 14 | P3 | Fix verb load-order fragility — lib/verbs/_config.sh sorts after board.sh in UTF-8; source helpers explicitly or LC_COLLATE=C before the glob | TODO |
-| 15 | P1 | bats inline-copy drift — test/run.sh SR_HELPER duplicates manifest_schema_ver(); extract a sourceable helper or add cross-ref guard | TODO |
+| 15 | P1 | bats inline-copy drift — test/run.sh SR_HELPER duplicates manifest_schema_ver(); extract a sourceable helper or add cross-ref guard | **DONE** — PR #30 (drift guard) |
 | 16 | P3 | Full bats port — migrate remaining test/run.sh sections to bats once test suite is split per-verb (deferred from #12) | TODO |

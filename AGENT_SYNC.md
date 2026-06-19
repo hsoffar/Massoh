@@ -11,8 +11,9 @@ v0.1 post-extraction — validate that a portable, gated agent OS reduces build-
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**Draining the follow-up inbox** (post-queue). **#13 (P0) DONE** — T6 made offline-deterministic
-(PR #29); CI no longer red-on-PR. Next: #15 (P1 bats inline-copy drift) → #14/#16 (P3).
+**None active — paused (diminishing returns).** Follow-up inbox: **#13 (P0) DONE** (T6 offline, PR #29),
+**#15 (P1) DONE** (drift guard, PR #30). Remaining inbox is **P3 only** — #14 (verb load-order tidy) +
+#16 (full bats port) — both "someday", paused pending owner priority. Suite 465 green.
 Pending owner-optional: deploy v0.19.0 via `massoh update`; commit/gitignore `deck/`.
 
 **Last shipped:** TASK-2026-06-19-bats — scoped bats infra + T1 pilot. **Merged PR #28, VERSION 0.19.0**,
@@ -98,6 +99,7 @@ bats 6/6 + run.sh 463 green. Completed the 24h queue (12 features v0.9→v0.19; 
 | 2026-06-19 | TASK-2026-06-19-schema-rename (#11): **APPROVE** — SR1–SR7 all independently verified (line refs in 06_review_result); 463/463 green (self-witnessed, T6 network-green in this env); fallback proven live: T-SR-4 synthetic old-manifest returns 1 + stderr `deprecated`; T-SR-5 neither-key returns `unknown` exit 0; inline-copy (test/run.sh SR_HELPER) byte-identical to bin/massoh lines 22–31; SR3 grep clean (zero `^version:` key readers); manifest↔bin lockstep (0 deletions in bin/massoh, 12 lines added — helper only); install/uninstall/block logic untouched; AGENT_SYNC.md+AGENT_BACKLOG.md untouched; owner sign-off on record (manifest.yml + bin/massoh, #11 named explicitly); scope: 6 files only; NB-1 inline-copy drift risk (non-blocking, copy correct today); NB-2 T-SR-10 tautology (non-blocking, matches spec). | reviewer-qa |
 | 2026-06-19 | TASK-2026-06-19-bats (#12): **APPROVE** — BA1–BA7 all independently verified; bats 6/6 ok exit 0 (self-witnessed); run.sh 463/463 green exit 0 (self-witnessed); BA5: git diff --name-only main → 3 files only (.github/workflows/ci.yml, CHANGELOG.md, VERSION); bin/massoh/manifest.yml/templates/policies/NON_NEGOTIABLES.md/lib/verbs/test/run.sh all diff-clean; BA6: all 6 @tests invoke $MASSOH + assert real filesystem/exit conditions (T1-5 md5 snapshot read-only proof, T1-6 rm+drift+non-zero); BA7: per-test BATS_TEST_TMPDIR, no load/source of run.sh; ci.yml valid YAML, both steps present (run.sh line 24, bats line 27), bats install line 20 before both; VERSION 0.19.0; CHANGELOG [0.19.0] accurate; NB-1 redundant redirect on bats `run` line (non-breaking); NB-2 bats install before run.sh step (correct, mirrors jq pattern). | reviewer-qa |
 | 2026-06-19 | TASK-2026-06-19-fix-t6 (#13): **REQUEST CHANGES** — FT2 (assertion non-vacuous) CONFIRMED: live `grep -q 'update available'` on real doctor output; setup genuinely advances B6 ahead of W6 (independently reproduced). FT1 (offline) PROVEN: network-blocked run (GIT_CONFIG_GLOBAL proxy:9 + sshCommand=false) → 463/463 green. FT3/FT4/FT5/FT6 all PASS. BLOCK-1: `rm -rf "$S6"` (line 107) intermittently emits `cannot remove .../seed6/.git: Directory not empty` to stderr (~50-100% of runs); seed6 persists in $TMP until EXIT trap; no cross-test leak but noise is undisclosed (Guardrail A8 honesty). Fix: `rm -rf "$S6" 2>/dev/null \|\| true`. BLOCK-2: `memory/MEMORY.md` is modified in working tree (pre-existing intake entries, unrelated to T6); handoff claims test/run.sh is ONLY file modified — implementer must confirm it will NOT be staged. Scope: bin/massoh/manifest/policies/lib/verbs/VERSION all clean. Fast-track re-review on 2 fixes. | reviewer-qa |
+| 2026-06-19 | TASK-2026-06-19-fix-drift (#15): **APPROVE** — DG1–DG4 all independently verified (line refs in 06_review_result); 465/465 green (self-witnessed); drift-detection independently reproduced: T-DG-1 RED on temp edit (bin/massoh line 25 `'^schema_version:'`→`'^schema_XXX:'`), reverted clean (git diff bin/massoh empty); DG1 awk anchors confirmed unique (bin/massoh line 22 `manifest_schema_ver()` at col 0); DG2 sed range anchors confirmed unique (`^cat > "\$SR_HELPER"` = line 3031 only, `^SR_HELPER_EOF$` = line 3045 only, no self-reference); DG3 diff exits 0 on current codebase; DG4 T-DG-2 non-vacuous (_dg_bin 8 lines, _dg_diverged has DIVERGE_MARKER, diff exits non-zero); scope = test/run.sh only (git diff --name-only main excl. .agent_tasks); bin/massoh/manifest/lib/verbs/VERSION/CHANGELOG untouched. | reviewer-qa |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -126,43 +128,41 @@ None.
 | TASK-2026-06-19-schema-rename (#11) | merged | DONE — PR #27 → main, VERSION 0.18.0 |
 | TASK-2026-06-19-bats (#12) | merged | DONE — PR #28 → main, VERSION 0.19.0 |
 | TASK-2026-06-19-fix-t6 (#13) | 06_review_result | REQUEST CHANGES — BLOCK-1: rm stderr noise undisclosed; BLOCK-2: memory/MEMORY.md scope disclosure. Fast-track on 2 fixes. |
+| TASK-2026-06-19-fix-drift (#15) | 06_review_result | APPROVE — DG1–DG4 verified; 465/465 green; drift-detection reproduced; scope clean. Ready to merge. |
 
 ## Last handoff
 ```
 Agent: massoh-reviewer-qa
 Mode: REVIEW_QA
-Task: TASK-2026-06-19-fix-t6 (#13) — T6 CI-flaky doctor update-check (P0 test-only)
-Status: REQUEST CHANGES. 06_review_result.md written.
-Branch: feat/fix-t6 (uncommitted)
+Task: TASK-2026-06-19-fix-drift (#15) — inline-copy drift guard (P1 test-only)
+Status: APPROVE. 06_review_result.md written.
+Branch: feat/fix-drift (uncommitted)
 
-Decision: REQUEST CHANGES. FT1–FT6 substantively correct. Two issues require resolution:
+Decision: APPROVE. All DG1–DG4 conditions independently verified. No blocking issues.
 
-  BLOCK-1 (test output noise): rm -rf "$S6" at test/run.sh line 107 intermittently
-    emits "cannot remove .../seed6/.git: Directory not empty" to stderr (~50-100% of
-    runs observed). seed6 persists in $TMP but trap covers cleanup; no cross-test leak.
-    Tests all pass (463/463). Handoff did not disclose this noise (Guardrail A8).
-    Fix: change line 107 to: rm -rf "$S6" 2>/dev/null || true
+  DG1 (bin/massoh extraction): awk anchors on /^manifest_schema_ver\(\)/ + /^\}$/ at
+    col 0. Confirmed unique in bin/massoh. _dg_bin non-empty (8 content lines).
+  DG2 (SR_HELPER extraction): sed range /^cat > "\$SR_HELPER"/,/^SR_HELPER_EOF$/ both
+    anchors confirmed unique in test/run.sh (lines 3031, 3045). No self-reference from
+    T-DG comment lines (start with '#'). Inner awk identical to DG1. _dg_sr non-empty.
+  DG3 (normalized diff): diff exits 0 on current codebase. Whitespace normalization on
+    both sides prevents false-red on indentation differences.
+  DG4 / T-DG-2 (non-vacuous): _dg_bin 8 lines non-empty; _dg_diverged = _dg_bin +
+    DIVERGE_MARKER; diff exits non-zero (independently reproduced).
 
-  BLOCK-2 (scope disclosure): memory/MEMORY.md is modified in working tree (pre-existing
-    intake entries from prior session). Handoff states test/run.sh is ONLY file modified.
-    Implementer must confirm memory/MEMORY.md will NOT be staged in the commit.
+  DRIFT DETECTION REPRODUCED LIVE:
+    Temp edit: bin/massoh line 25 '^schema_version:' -> '^schema_XXX:'
+    Suite result: T-DG-1 FAIL, T-DG-2 ok, 1/465 FAILED
+    Reverted: git diff bin/massoh = clean (empty diff)
+    Clean suite: ALL GREEN — 465 checks passed.
 
-  FT2 (assertion non-vacuous): CONFIRMED. grep -q 'update available' on real doctor
-    output. Setup genuinely makes W6 behind B6/main (independently reproduced).
-  FT1 (offline): PROVEN. Network-blocked run: ALL GREEN — 463 checks passed. Exit 0.
-  FT3: 4 offline-safe assertions (lines 121–124) + cp -rp lib (line 111) preserved.
-  FT4: Both runs = 463 checks. Self-witnessed.
-  FT5: All vars under $TMP. Trap covers cleanup. No cross-test leak.
-  Scope: bin/massoh, manifest.yml, policies, lib/verbs, VERSION — all diff-clean.
+  Scope: git diff --name-only main (excl. .agent_tasks) = test/run.sh only.
+    bin/massoh/manifest.yml/lib/verbs/VERSION/CHANGELOG — all untouched.
+  Tests: 465/465 green (self-witnessed after revert).
 
-Non-blocking:
-  NB-1: Handoff run outputs omit rm error (honesty observation, resolved by BLOCK-1 fix).
-  NB-2: T4 (line 61) still clones REPO_ROOT bare — pre-existing, out of scope.
-  NB-3: git -c init.defaultBranch=main pattern correct (no global config mutation).
-
-Next recommended agent: massoh-implementer (fast-track fix: 1-line change + commit discipline)
-Next action: Apply rm -rf "$S6" 2>/dev/null || true at line 107; confirm memory/MEMORY.md
-             not staged; re-route to massoh-reviewer-qa for fast-track approval.
+Next recommended agent: orchestrator / auto-merge on green (per policy)
+Next action: Commit feat/fix-drift (test/run.sh + task artifacts only), squash-merge PR.
+             Note: #13 (fix-t6) still REQUEST CHANGES — handle separately.
 ```
 
 ## [meta-engineer] 2026-06-19 — RMT proposal (TASK-2026-06-19-rmt)
