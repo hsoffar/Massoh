@@ -3117,6 +3117,37 @@ check "T-SR-10 manifest.yml unmutated during T-SR suite" \
 # This check is a marker assertion documenting that all prior tests must pass.
 check "T-SR-11 full suite green (enforced by harness exit code)" "[ '$fails' -eq 0 ]"
 
+echo "== T-DG: drift-guard — manifest_schema_ver() inline copy =="
+# DG1: extract manifest_schema_ver() body from bin/massoh, anchored to function signature.
+# awk: start collecting after the line matching '^manifest_schema_ver()$', stop before lone '^}$'.
+# Neither the signature line nor the closing brace is included.
+_dg_bin=$(awk '/^manifest_schema_ver\(\)/{found=1; next} found && /^\}$/{exit} found{print}' \
+  "$REPO_ROOT/bin/massoh" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//') || true
+
+# DG2: extract manifest_schema_ver() body from the SR_HELPER heredoc in this test file,
+# anchored to the heredoc delimiters (^cat > "$SR_HELPER" … ^SR_HELPER_EOF$).
+# Then apply the same awk body-extraction used in DG1. Read from $REPO_ROOT/test/run.sh
+# (not $0, which may be a relative path) so the path is always absolute and stable.
+# The sed pattern uses \$ to match the literal '$' character in the source file line
+# 'cat > "$SR_HELPER" <<'SR_HELPER_EOF''. No self-reference: the T-DG lines below do
+# not start with 'cat > "' so they cannot trigger the sed range opener.
+_dg_sr=$(sed -n '/^cat > "\$SR_HELPER"/,/^SR_HELPER_EOF$/p' "$REPO_ROOT/test/run.sh" | \
+  awk '/^manifest_schema_ver\(\)/{found=1; next} found && /^\}$/{exit} found{print}' | \
+  sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//') || true
+
+# DG3: compare with diff (line-by-line); both sides whitespace-normalized — false-green-proof
+# on indentation, real-red on any logic change (grep key, awk expr, printf string, fallback).
+# T-DG-1: assert the two extracted bodies are identical today.
+check "T-DG-1 manifest_schema_ver() body identical between bin/massoh and SR_HELPER" \
+  "diff <(printf '%s\n' \"\$_dg_bin\") <(printf '%s\n' \"\$_dg_sr\") >/dev/null 2>&1"
+
+# DG4 / T-DG-2: non-vacuous meta-check — inject a known divergence into one copy and assert
+# that diff exits non-zero, proving the guard would catch real drift.
+_dg_diverged="${_dg_bin}
+DIVERGE_MARKER"
+check "T-DG-2 drift guard is non-vacuous (detects injected divergence)" \
+  "! diff <(printf '%s\n' \"\$_dg_bin\") <(printf '%s\n' \"\$_dg_diverged\") >/dev/null 2>&1"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]
