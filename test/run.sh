@@ -2100,6 +2100,111 @@ check "T-FL-k 'massoh fleet' dispatches (exit 0 on empty run)" "[ $rc_fl_k -eq 0
 check "T-FL-k unknown cmd usage lists 'fleet'" \
   "('$MASSOH' bogus_verb_fleet_$$ 2>&1 || true) | grep -q 'fleet'"
 
+echo "== T-PR: profiles + config.yml (v0.14.0) =="
+
+# Helper: create a minimal Massoh project for config tests.
+mkcfgrepo() {
+  local d="$1"
+  mkdir -p "$d/agent-project" "$d/.agent_tasks"
+  ( cd "$d" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+  printf 'massoh project marker\n' > "$d/.massoh"
+  printf '# AGENT_BACKLOG\n\n| # | Pri | Item | Why | Status |\n|---|---|---|---|---|\n' > "$d/AGENT_BACKLOG.md"
+  printf '# AGENT_SYNC\n\n## Decision log\n' > "$d/AGENT_SYNC.md"
+  ( cd "$d" && git add -A && git commit -qm "feat: seed cfg repo" )
+}
+
+# T-PR-a: No-op when absent — massoh meta with NO config.yml vs EMPTY config.yml: byte-identical.
+# Also confirms: output contains built-in defaults (2x, threshold=3).
+PRa="$TMP/pra"; mkcfgrepo "$PRa"
+out_pra_nofile="$( cd "$PRa" && "$MASSOH" meta 2>&1 )"
+# Create an empty config.yml
+printf '' > "$PRa/agent-project/config.yml"
+out_pra_empty="$( cd "$PRa" && "$MASSOH" meta 2>&1 )"
+check "T-PR-a no-config vs empty-config byte-identical (PC1)" \
+  "[ '$( printf '%s' "$out_pra_nofile" | md5sum )' = '$( printf '%s' "$out_pra_empty" | md5sum )' ]"
+check "T-PR-a output shows built-in default 2x (OUTLIER_FACTOR=2)" \
+  "printf '%s\n' \"\$out_pra_nofile\" | grep -q '2x'"
+check "T-PR-a output shows built-in default >=3 (REPEAT_THRESHOLD=3)" \
+  "printf '%s\n' \"\$out_pra_nofile\" | grep -q '>=3'"
+
+# T-PR-b: Project value overrides built-in default for all 3 tunables.
+PRb="$TMP/prb"; mkcfgrepo "$PRb"
+# Seed ledger so meta has data to show outlier factor in output
+mkdir -p "$PRb/.agent_tasks"
+printf '%s\t%s\t%s\t%s\t%s\n' "2026-06-19T00:00:00Z" "TASK-1" "scope"       "100"  "30"  >> "$PRb/.agent_tasks/ledger.tsv"
+printf '%s\t%s\t%s\t%s\t%s\n' "2026-06-19T00:01:00Z" "TASK-1" "implementer" "1000" "300" >> "$PRb/.agent_tasks/ledger.tsv"
+printf 'meta_outlier_factor: 5\nmeta_repeat_threshold: 7\ncron_idle_min: 10\n' \
+  > "$PRb/agent-project/config.yml"
+out_prb_meta="$( cd "$PRb" && "$MASSOH" meta 2>&1 )"
+check "T-PR-b meta_outlier_factor=5 reflected in output (5x, not 2x)" \
+  "printf '%s\n' \"\$out_prb_meta\" | grep -q '5x'"
+check "T-PR-b meta_repeat_threshold=7 reflected in output (>=7, not >=3)" \
+  "printf '%s\n' \"\$out_prb_meta\" | grep -q '>=7'"
+# cron_idle_min=10: test via massoh-cron dry-run (idleness gate uses IDLE_MIN)
+# NO_IDLE=1 bypasses gate; use status output to verify IDLE_MIN read.
+CRON_PRb="$REPO_ROOT/bin/massoh-cron"
+out_prb_cron_status="$( cd "$PRb" && MASSOH_HOME="$REPO_ROOT" "$CRON_PRb" status 2>&1 )"
+check "T-PR-b cron_idle_min=10 reflected in cron status (idle gate: 10m)" \
+  "printf '%s\n' \"\$out_prb_cron_status\" | grep -q '10m'"
+# Regression: remove config.yml → reverts to 2x / threshold=3 / 25m (PC1 regression).
+rm "$PRb/agent-project/config.yml"
+out_prb_revert="$( cd "$PRb" && "$MASSOH" meta 2>&1 )"
+check "T-PR-b regression: removing config.yml reverts to 2x (PC1)" \
+  "printf '%s\n' \"\$out_prb_revert\" | grep -q '2x'"
+check "T-PR-b regression: removing config.yml reverts to >=3 (PC1)" \
+  "printf '%s\n' \"\$out_prb_revert\" | grep -q '>=3'"
+
+# T-PR-c: Malformed integer degrades to built-in default; exit 0.
+PRc="$TMP/prc"; mkcfgrepo "$PRc"
+printf 'meta_outlier_factor: not_a_number\n' > "$PRc/agent-project/config.yml"
+rc_prc=0
+out_prc="$( cd "$PRc" && "$MASSOH" meta 2>&1 )" || rc_prc=$?
+check "T-PR-c malformed integer: exit 0 (PC2/PC5)" "[ $rc_prc -eq 0 ]"
+check "T-PR-c malformed integer: output shows 2x (falls back to built-in default)" \
+  "printf '%s\n' \"\$out_prc\" | grep -q '2x'"
+
+# T-PR-d: Malformed YAML structure degrades to all defaults; exit 0.
+PRd="$TMP/prd"; mkcfgrepo "$PRd"
+printf -- '---\nnested:\n  key: value\ncron_idle_min: !!python/object:os.system\n' \
+  > "$PRd/agent-project/config.yml"
+rc_prd=0
+out_prd_meta="$( cd "$PRd" && "$MASSOH" meta 2>&1 )" || rc_prd=$?
+check "T-PR-d malformed YAML: meta exits 0 (PC3/PC5)" "[ $rc_prd -eq 0 ]"
+check "T-PR-d malformed YAML: meta shows built-in default 2x" \
+  "printf '%s\n' \"\$out_prd_meta\" | grep -q '2x'"
+check "T-PR-d malformed YAML: meta shows built-in default >=3" \
+  "printf '%s\n' \"\$out_prd_meta\" | grep -q '>=3'"
+
+# T-PR-e: Secret-sounding key guard — warns to stderr and returns default, never file value.
+PRe="$TMP/pre"; mkcfgrepo "$PRe"
+printf 'plane_api_token: supersecret123\n' > "$PRe/agent-project/config.yml"
+# Source _config.sh in a subshell; capture stdout and stderr separately.
+eval_out_pre="$(
+  . "$REPO_ROOT/lib/verbs/_config.sh"
+  massoh_config_get "$PRe/agent-project/config.yml" "plane_api_token" "mydefault" 2>/dev/null
+)"
+warn_pre="$(
+  . "$REPO_ROOT/lib/verbs/_config.sh"
+  massoh_config_get "$PRe/agent-project/config.yml" "plane_api_token" "mydefault" 2>&1 >/dev/null
+)"
+check "T-PR-e secret key: warning emitted to stderr (PC4)" \
+  "printf '%s\n' \"\$warn_pre\" | grep -qi 'WARNING'"
+check "T-PR-e secret key: returns default not file value (PC4)" \
+  "[ \"\$eval_out_pre\" = 'mydefault' ]"
+
+# T-PR-f: Scope check — exactly 3 massoh_config_get call sites outside _config.sh.
+prf_count="$(grep -r 'massoh_config_get' "$REPO_ROOT/lib/verbs/" "$REPO_ROOT/bin/massoh-cron" \
+  2>/dev/null | grep -v '_config.sh' | wc -l | tr -d ' ')"
+check "T-PR-f exactly 3 massoh_config_get call sites outside _config.sh (PC6)" \
+  "[ \"$prf_count\" -eq 3 ]"
+
+# T-PR-g: Helper callable after sourcing the verb-loading loop (bin/massoh sources _config.sh).
+PRg="$TMP/prg"; mkcfgrepo "$PRg"
+rc_prg=0
+( cd "$PRg" && "$MASSOH" meta >/dev/null 2>&1 ) || rc_prg=$?
+check "T-PR-g helper callable after sourcing loop: massoh meta exits 0 (PC8)" \
+  "[ $rc_prg -eq 0 ]"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]

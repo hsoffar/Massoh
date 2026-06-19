@@ -8,8 +8,6 @@
 # agent-project/META.proposed.md (append-only >>). NEVER writes ledger, backlog, sync, or safety files.
 cmd_meta() {
   local write_meta=0
-  local OUTLIER_FACTOR=2    # M7: named constant — multiplier for stage-token outlier detection
-  local REPEAT_THRESHOLD=3  # M7: named constant — count at which a finding is flagged as "promote"
 
   while [ $# -gt 0 ]; do case "$1" in
     --write-proposals) write_meta=1;;
@@ -25,6 +23,16 @@ cmd_meta() {
 
   local ts; ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   local ver; ver="$(mver)"
+
+  # PC6 call-site 1 of 3: read meta_outlier_factor from project config (default 2).
+  # PC2: integer-validate before use; malformed → fall back to built-in default.
+  local _cfg="$repo/agent-project/config.yml"
+  local OUTLIER_FACTOR REPEAT_THRESHOLD _raw_of _raw_rt
+  _raw_of="$(massoh_config_get "$_cfg" "meta_outlier_factor" "2" || true)"
+  case "$_raw_of" in ''|*[!0-9]*) OUTLIER_FACTOR=2 ;; *) OUTLIER_FACTOR="$_raw_of" ;; esac
+  # PC6 call-site 2 of 3: read meta_repeat_threshold from project config (default 3).
+  _raw_rt="$(massoh_config_get "$_cfg" "meta_repeat_threshold" "3" || true)"
+  case "$_raw_rt" in ''|*[!0-9]*) REPEAT_THRESHOLD=3 ;; *) REPEAT_THRESHOLD="$_raw_rt" ;; esac
 
   # M1 / S1: SAFETY — the ONLY permitted write in cmd_meta
   local META_PROPOSALS="$repo/agent-project/META.proposed.md"  # SAFETY: only permitted write in cmd_meta
