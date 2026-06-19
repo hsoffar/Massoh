@@ -4,7 +4,7 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-19 (24h-queue fan-out — **MERGED**: #2 CI (#19), #4 intake (#20, v0.12.0), #6 fleet rollup (#21, v0.13.0, 344 green). #5 auto-ledger DEFERRED. #9 profiles + #8 renderer LICENSED. Firing #9 implementer (→ v0.14.0). Remaining scope: #7 RMT, #10 AGENTS.md, #11 schema⚠sign-off, #12 bats.)
+Last updated: 2026-06-19 (24h-queue fan-out — **MERGED 7**: CI #19 · intake #20 v0.12 · fleet #21 v0.13 · profiles #22 v0.14 (+ license-gate/board/modularize earlier). #5 DEFERRED. #8 renderer + #10 AGENTS.md LICENSED; firing #8 implementer (→ v0.15.0). Remaining: #7 RMT, #11 schema⚠sign-off, #12 bats. Follow-up noted: verb load-order fragility (NB-1, profiles review).)
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
@@ -89,6 +89,7 @@ on green; PRs reviewable post-hoc. See `AGENT_BACKLOG.md` §24h-plan.
 | 2026-06-19 | TASK-2026-06-19-fleet-rollup (#6): **APPROVE** — FL1–FL11 all independently verified (line refs in 06_review_result); runtime write-isolation proof: REPO_A md5=17085353bc1cfdcec57d69ee29732988 identical before/after, REPO_B md5=0bdc7d6490ae47630d23cb27b36cf118 identical before/after; 344/344 green (independently run); T-FL-a/b substantive (git-init'd repos, real md5 snapshot); T-MB-f update legitimate additive (fleet added to usage string, assertion still byte-exact); scope clean (5 files: lib/verbs/fleet.sh new, bin/massoh +2 lines, VERSION, CHANGELOG, test/run.sh +T-FL); AGENT_BACKLOG.md + AGENT_SYNC.md untouched; manifest.yml untouched; safety-critical files untouched; NB-1 arch-safety doc FL11 text says 0.11.0→0.12.0 (stale; implementation correct at 0.13.0; non-blocking). | reviewer-qa |
 | 2026-06-19 | TASK-2026-06-19-fleet-rollup (#6): **MERGED** (squash) PR #21 → main `7d1b7d1`, VERSION 0.13.0. | owner |
 | 2026-06-19 | #9 profiles: arch/safety **APPROVED** (PC1–PC9; pure-bash parser, no dep; manifest untouched; target 334) → 04 licensed. #8 board-renderer: arch/safety **APPROVED** (BR1–BR8; HTML-escape every field, jq isolated to --push, sentinel clobber-guard; target +12) → 04 licensed. Both batch-authorized. | architecture-safety |
+| 2026-06-19 | TASK-2026-06-19-profiles (#9): **APPROVE** — PC1–PC9 all independently verified (line refs in 06_review_result); 361/361 green (self-witnessed twice); no-config byte-identical proven (T-PR-a md5sum match); scope clean (6 files: lib/verbs/_config.sh new, lib/verbs/meta.sh +2 call sites, bin/massoh-cron +2 lines, VERSION, CHANGELOG, test/run.sh +17); manifest.yml/templates/bin/massoh/AGENT_SYNC.md/AGENT_BACKLOG.md untouched; T-PR-a–g all substantive; NB-1 PC8 handoff justification inaccurate (board.sh sorts before _config.sh in en_US.UTF-8; safe because board.sh has no config_get calls — fix load-order explicitly in next verb-loop pass); NB-2 2-tier precedence deviation non-blocking (arch-safety §PC5 approved; documented in CHANGELOG + _config.sh header). | reviewer-qa |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -110,35 +111,38 @@ None.
 | TASK-2026-06-19-intake (#4) | merged | DONE — PR #20 → main `88c1e86`, VERSION 0.12.0 |
 | TASK-2026-06-19-auto-ledger (#5) | 03_architecture_safety | DEFERRED — hook lacks token/time data; 3 re-entry conditions |
 | TASK-2026-06-19-fleet-rollup (#6) | merged | DONE — PR #21 → main `7d1b7d1`, VERSION 0.13.0 |
-| TASK-2026-06-19-profiles (#9) | 04_implementation_packet | LICENSED — implementer building (PC1–PC9, → v0.14.0) |
+| TASK-2026-06-19-profiles (#9) | 06_review_result | APPROVED — reviewer-qa APPROVE; 361/361 green; ready to merge (→ v0.14.0) |
 | TASK-2026-06-19-board-renderer (#8) | 04_implementation_packet | LICENSED — queued (BR1–BR8, → v0.15.0) |
 
 ## Last handoff
 ```
 Agent: massoh-reviewer-qa
 Mode: REVIEW_QA
-Task: TASK-2026-06-19-fleet-rollup -- massoh fleet verb (v0.13.0)
+Task: TASK-2026-06-19-profiles (#9) -- profiles + config.yml (v0.14.0)
 Status: APPROVED. 06_review_result.md written.
-Branch: feat/fleet-rollup (working tree, uncommitted -- per batch-auth terms)
-Decision: APPROVE. FL1-FL11 all independently verified. 344/344 green (self-witnessed).
-  Write-isolation proven at runtime: REPO_A md5 17085353bc1cfdcec57d69ee29732988 identical
-  before/after; REPO_B md5 0bdc7d6490ae47630d23cb27b36cf118 identical before/after.
-  Static grep: no write operator (>, >>, tee, cp, mv, mkdir, touch) targets any repo-path var.
-  FL7 clean: curl/wget/nc/ssh/gh/TOKEN grep empty.
-  FL4 clean: source/eval/bash -c grep (non-comment) empty.
-  FL9: exactly 2 lines in bin/massoh (dispatch + usage). Verified via git diff HEAD.
-  FL10: manifest.yml git diff empty. PASS.
-  FL11: VERSION=0.13.0, CHANGELOG [0.13.0] section present.
-  Scope clean: 5 files only. AGENT_BACKLOG.md + AGENT_SYNC.md untouched in working tree.
-  Safety-critical files untouched. T-FL-a/b substantive. T-MB-f legitimate additive update.
+Branch: feat/profiles (working tree, uncommitted -- per batch-auth terms)
+Decision: APPROVE. PC1-PC9 all independently verified. 361/361 green (self-witnessed twice).
+  No-config byte-identical proven: T-PR-a md5sum match (no-config == empty-config), output
+  shows 2x / >=3 (built-in defaults active).
+  PC2: case guards at meta.sh:32,35 + cron:21. T-PR-c green (not_a_number -> 2x).
+  PC3: grep yq/jq/python -> empty. T-PR-d green (complex YAML -> all defaults).
+  PC4: _config.sh:30-37 case pattern; T-PR-e green (plane_api_token -> WARNING + default).
+  PC5: 5 || true guard sites independently read.
+  PC6: grep count = 3. T-PR-f green.
+  PC7: 2-tier MVP; T-PR-b green. Global tier deferred (arch-safety §PC5). Non-blocking.
+  PC8: load order safe (board.sh has no config_get calls). NB-1 noted (non-blocking).
+  PC9: VERSION=0.14.0; cron diff=2 lines; manifest diff empty.
+  Scope: 6 files only. manifest.yml/templates/bin/massoh/AGENT_SYNC.md/AGENT_BACKLOG.md untouched.
+  Safety-critical files untouched (all git diffs empty).
 Checks run (self-witnessed):
-  bash test/run.sh -> ALL GREEN -- 344 checks passed. PASS.
-  grep write operators fleet.sh (non-comment, non-/dev/null) -> 4 printf string literal hits only. PASS.
-  grep curl/wget/nc/ssh/gh/TOKEN fleet.sh -> empty. PASS.
-  grep source/eval/bash -c fleet.sh (non-comment) -> empty. PASS.
-  Runtime write-isolation proof -> md5 identical before/after. PASS.
-  git diff HEAD -- AGENT_BACKLOG.md AGENT_SYNC.md manifest.yml -> empty. PASS.
-Non-blocking: NB-1 arch-safety doc FL11 text says 0.11.0->0.12.0 (stale; product correct at 0.13.0).
-Next recommended agent: orchestrator (auto-merge feat/fleet-rollup per auto-merge-on-green policy)
-Next action: orchestrator squash-merges feat/fleet-rollup PR -> main; owner runs massoh update
+  bash test/run.sh (x2) -> ALL GREEN -- 361 checks passed. PASS.
+  grep massoh_config_get lib/verbs/ bin/massoh-cron | grep -v _config.sh | wc -l -> 3. PASS.
+  grep yq|python|jq _config.sh -> empty. PASS.
+  git diff HEAD -- bin/massoh manifest.yml templates/ AGENT_SYNC.md AGENT_BACKLOG.md -> empty. PASS.
+Non-blocking:
+  NB-1: board.sh sorts before _config.sh in en_US.UTF-8 glob order; board.sh has no config_get
+        calls so safe; PC8 handoff justification inaccurate. Fix in next verb-loop arch-safety pass.
+  NB-2: 2-tier vs 3-tier -- arch-safety §PC5 approved 2-tier MVP; documented in product + CHANGELOG.
+Next recommended agent: orchestrator (auto-merge feat/profiles per auto-merge-on-green policy)
+Next action: orchestrator squash-merges feat/profiles PR -> main; owner runs massoh update
 ```
