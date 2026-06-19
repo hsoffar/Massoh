@@ -1028,6 +1028,210 @@ check "T-meta-L 02_AGENT_ROLES.md has exactly 7 data rows"  "[ \"$data_rows_l\" 
 # T-meta-M: OPERATING_SYSTEM.md references "meta" or "massoh-meta-engineer"
 check "T-meta-M OPERATING_SYSTEM.md references meta role"   "grep -qiE 'meta|massoh-meta-engineer' '$REPO_ROOT/OPERATING_SYSTEM.md'"
 
+echo "== T16: massoh gate (license-to-code gate) =="
+
+GATE_CHECK="$REPO_ROOT/scripts/massoh-gate-check"
+
+# Capture md5sum of safety-critical files BEFORE the T16 suite (for T16r).
+md5_massoh_t16_before="$(md5sum "$MASSOH" | awk '{print $1}')"
+md5_manifest_t16_before="$(md5sum "$REPO_ROOT/manifest.yml" | awk '{print $1}')"
+
+# Helper: create a temp git repo with .massoh marker (Massoh project).
+mkgaterepo() {
+  local d="$1"
+  mkdir -p "$d"
+  ( cd "$d" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+  printf 'massoh project marker\n' > "$d/.massoh"
+  ( cd "$d" && git add -A && git commit -qm "feat: seed gate repo" )
+}
+
+# Helper: create .agent_tasks/<name>/04_implementation_packet.md in a repo.
+mkgatepacket() {
+  local repo="$1" name="${2:-TASK-test}"
+  mkdir -p "$repo/.agent_tasks/$name"
+  printf '# 04 — Implementation Packet\n' > "$repo/.agent_tasks/$name/04_implementation_packet.md"
+}
+
+# T16a — gate on creates hook and CI template in a Massoh git repo
+G16a="$TMP/g16a"; mkgaterepo "$G16a"
+( cd "$G16a" && "$MASSOH" gate on >/dev/null 2>&1 )
+check "T16a gate on creates .git/hooks/pre-push"          "[ -f '$G16a/.git/hooks/pre-push' ]"
+check "T16a .git/hooks/pre-push is executable"            "[ -x '$G16a/.git/hooks/pre-push' ]"
+check "T16a gate on creates .github/workflows/massoh-gate.yml" "[ -f '$G16a/.github/workflows/massoh-gate.yml' ]"
+
+# T16b — gate on is idempotent (run twice, same result, exit 0, no duplicate markers)
+G16b="$TMP/g16b"; mkgaterepo "$G16b"
+( cd "$G16b" && "$MASSOH" gate on >/dev/null 2>&1 )
+md5_hook_t16b_first="$(md5sum "$G16b/.git/hooks/pre-push" | awk '{print $1}')"
+rc16b=0
+( cd "$G16b" && "$MASSOH" gate on >/dev/null 2>&1 ) || rc16b=$?
+md5_hook_t16b_second="$(md5sum "$G16b/.git/hooks/pre-push" | awk '{print $1}')"
+check "T16b second gate on exits 0"                       "[ $rc16b -eq 0 ]"
+check "T16b hook content unchanged on second run"         "[ '$md5_hook_t16b_first' = '$md5_hook_t16b_second' ]"
+check "T16b no duplicate massoh-gate:start markers"       "[ \"\$(grep -c 'massoh-gate:start' '$G16b/.git/hooks/pre-push')\" -eq 1 ]"
+
+# T16c — gate on does NOT overwrite a pre-existing user hook
+G16c="$TMP/g16c"; mkgaterepo "$G16c"
+mkdir -p "$G16c/.git/hooks"
+printf '#!/usr/bin/env bash\n# SENTINEL-UNIQUE-CONTENT-T16c\necho "pre-existing hook"\n' > "$G16c/.git/hooks/pre-push"
+chmod +x "$G16c/.git/hooks/pre-push"
+( cd "$G16c" && "$MASSOH" gate on >/dev/null 2>&1 )
+check "T16c pre-existing hook sentinel still present"     "grep -q 'SENTINEL-UNIQUE-CONTENT-T16c' '$G16c/.git/hooks/pre-push'"
+check "T16c massoh gate block also appended"              "grep -q 'massoh-gate:start' '$G16c/.git/hooks/pre-push'"
+
+# T16d — gate off removes the hook block and preserves pre-existing user content
+G16d="$TMP/g16d"; mkgaterepo "$G16d"
+mkdir -p "$G16d/.git/hooks"
+printf '#!/usr/bin/env bash\n# SENTINEL-UNIQUE-CONTENT-T16d\necho "pre-existing hook"\n' > "$G16d/.git/hooks/pre-push"
+chmod +x "$G16d/.git/hooks/pre-push"
+( cd "$G16d" && "$MASSOH" gate on >/dev/null 2>&1 )
+( cd "$G16d" && "$MASSOH" gate off >/dev/null 2>&1 )
+check "T16d massoh gate block absent after gate off"      "! grep -q 'massoh-gate:start' '$G16d/.git/hooks/pre-push'"
+check "T16d pre-existing sentinel content preserved"      "grep -q 'SENTINEL-UNIQUE-CONTENT-T16d' '$G16d/.git/hooks/pre-push'"
+
+# T16e — gate off is a no-op when gate was never installed
+G16e="$TMP/g16e"; mkgaterepo "$G16e"
+rc16e=0
+( cd "$G16e" && "$MASSOH" gate off >/dev/null 2>&1 ) || rc16e=$?
+check "T16e gate off exits 0 when never installed"        "[ $rc16e -eq 0 ]"
+check "T16e no hook file created by gate off"             "[ ! -f '$G16e/.git/hooks/pre-push' ]"
+
+# T16f — checker blocks push on non-exempt path with no packet
+G16f="$TMP/g16f"; mkgaterepo "$G16f"
+( cd "$G16f" && mkdir -p bin && printf 'code\n' > bin/something && git add -A && git commit -qm "add non-exempt" ) >/dev/null 2>&1
+base16f="$(git -C "$G16f" rev-parse HEAD~1 2>/dev/null)"
+rc16f=0
+out16f="$( cd "$G16f" && MASSOH_GATE_OVERRIDE="" "$GATE_CHECK" --ci "$base16f" 2>&1 )" || rc16f=$?
+check "T16f checker exits 1 on non-exempt path without packet" "[ $rc16f -ne 0 ]"
+check "T16f checker output mentions 04_implementation_packet.md" \
+  "printf '%s\n' \"\$out16f\" | grep -q '04_implementation_packet'"
+
+# T16g — checker passes when packet exists
+G16g="$TMP/g16g"; mkgaterepo "$G16g"
+mkgatepacket "$G16g"
+( cd "$G16g" && mkdir -p bin && printf 'code\n' > bin/something && git add -A && git commit -qm "add non-exempt" ) >/dev/null 2>&1
+base16g="$(git -C "$G16g" rev-parse HEAD~1 2>/dev/null)"
+rc16g=0
+( cd "$G16g" && MASSOH_GATE_OVERRIDE="" "$GATE_CHECK" --ci "$base16g" >/dev/null 2>&1 ) || rc16g=$?
+check "T16g checker exits 0 when packet exists"            "[ $rc16g -eq 0 ]"
+
+# T16h — checker passes when all paths are exempt (markdown + .agent_tasks only)
+G16h="$TMP/g16h"; mkgaterepo "$G16h"
+( cd "$G16h" && mkdir -p ".agent_tasks/TASK-x" && \
+    printf 'notes\n' > notes.md && \
+    printf 'req\n' > ".agent_tasks/TASK-x/00_request.md" && \
+    git add -A && git commit -qm "add only exempt files" ) >/dev/null 2>&1
+base16h="$(git -C "$G16h" rev-parse HEAD~1 2>/dev/null)"
+rc16h=0
+( cd "$G16h" && MASSOH_GATE_OVERRIDE="" "$GATE_CHECK" --ci "$base16h" >/dev/null 2>&1 ) || rc16h=$?
+check "T16h checker exits 0 on exempt-only diff (no packet needed)" "[ $rc16h -eq 0 ]"
+
+# T16i — checker passes on AGENT_SYNC.md, memory/ paths, .github/ paths (all exempt)
+G16i="$TMP/g16i"; mkgaterepo "$G16i"
+( cd "$G16i" && mkdir -p memory .github/workflows && \
+    printf 'sync\n' > AGENT_SYNC.md && \
+    printf 'mem\n' > memory/MEMORY.md && \
+    printf 'wf\n' > .github/workflows/some.yml && \
+    git add -A && git commit -qm "add exempt files" ) >/dev/null 2>&1
+base16i="$(git -C "$G16i" rev-parse HEAD~1 2>/dev/null)"
+rc16i=0
+( cd "$G16i" && MASSOH_GATE_OVERRIDE="" "$GATE_CHECK" --ci "$base16i" >/dev/null 2>&1 ) || rc16i=$?
+check "T16i AGENT_SYNC.md/memory//.github/ all exempt; exits 0"  "[ $rc16i -eq 0 ]"
+
+# T16j — MASSOH_GATE_OVERRIDE=1 causes exit 0 with warning
+G16j="$TMP/g16j"; mkgaterepo "$G16j"
+( cd "$G16j" && mkdir -p bin && printf 'code\n' > bin/something && git add -A && git commit -qm "non-exempt" ) >/dev/null 2>&1
+base16j="$(git -C "$G16j" rev-parse HEAD~1 2>/dev/null)"
+rc16j=0
+out16j="$( cd "$G16j" && MASSOH_GATE_OVERRIDE=1 "$GATE_CHECK" --ci "$base16j" 2>&1 )" || rc16j=$?
+check "T16j MASSOH_GATE_OVERRIDE=1 exits 0"                "[ $rc16j -eq 0 ]"
+check "T16j output contains 'OVERRIDE active'"              "printf '%s\n' \"\$out16j\" | grep -q 'OVERRIDE active'"
+
+# T16k — git push --no-verify bypass: hook not invoked by git
+G16k="$TMP/g16k"; mkgaterepo "$G16k"
+( cd "$G16k" && "$MASSOH" gate on >/dev/null 2>&1 )
+# Create a bare remote
+BARE16k="$TMP/bare16k.git"
+git clone -q --bare "$G16k" "$BARE16k"
+( cd "$G16k" && git remote add origin "$BARE16k" 2>/dev/null || git remote set-url origin "$BARE16k" )
+( cd "$G16k" && mkdir -p bin && printf 'code\n' > bin/something && git add -A && git commit -qm "non-exempt no packet" ) >/dev/null 2>&1
+rc16k=0
+( cd "$G16k" && git push --no-verify origin HEAD:main >/dev/null 2>&1 ) || rc16k=$?
+check "T16k git push --no-verify exits 0 (hook not invoked)" "[ $rc16k -eq 0 ]"
+
+# T16l — null-SHA (first-push) degrades to exit 0
+G16l="$TMP/g16l"; mkgaterepo "$G16l"
+local_sha16l="$(git -C "$G16l" rev-parse HEAD 2>/dev/null)"
+rc16l=0
+( cd "$G16l" && printf 'refs/heads/main %s refs/heads/main %s\n' \
+    "$local_sha16l" "0000000000000000000000000000000000000000" | \
+    MASSOH_GATE_OVERRIDE="" "$GATE_CHECK" >/dev/null 2>&1 ) || rc16l=$?
+check "T16l null-SHA (first push) degrades to exit 0"      "[ $rc16l -eq 0 ]"
+
+# T16m — empty diff CI mode exits 0
+G16m="$TMP/g16m"; mkgaterepo "$G16m"
+# base = HEAD = same commit → empty diff
+base16m="$(git -C "$G16m" rev-parse HEAD 2>/dev/null)"
+rc16m=0
+( cd "$G16m" && MASSOH_GATE_OVERRIDE="" "$GATE_CHECK" --ci "$base16m" >/dev/null 2>&1 ) || rc16m=$?
+check "T16m empty diff (CI mode) exits 0"                  "[ $rc16m -eq 0 ]"
+
+# T16n — gate on fails outside a git repo or non-Massoh project
+G16n_nongit="$TMP/g16n_nongit"; mkdir -p "$G16n_nongit"
+rc16n_nongit=0
+( cd "$G16n_nongit" && "$MASSOH" gate on 2>/dev/null ) || rc16n_nongit=$?
+check "T16n gate on fails outside git repo (exit 1)"       "[ $rc16n_nongit -ne 0 ]"
+check "T16n gate on wrote no hook outside git repo"        "[ ! -f '$G16n_nongit/.git/hooks/pre-push' ]"
+# Also test: git repo but not a Massoh project
+G16n_nogit="$TMP/g16n_nomassoh"; mkdir -p "$G16n_nogit"
+( cd "$G16n_nogit" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t ) >/dev/null 2>&1
+# No .massoh and no agent-project/
+rc16n_nomassoh=0
+( cd "$G16n_nogit" && "$MASSOH" gate on 2>/dev/null ) || rc16n_nomassoh=$?
+check "T16n gate on fails in git repo without .massoh/agent-project/" "[ $rc16n_nomassoh -ne 0 ]"
+check "T16n no hook file created for non-Massoh repo"      "[ ! -f '$G16n_nogit/.git/hooks/pre-push' ]"
+
+# T16o — checker rejects mix of exempt + non-exempt paths when no packet
+G16o="$TMP/g16o"; mkgaterepo "$G16o"
+( cd "$G16o" && \
+    printf 'notes\n' > "notes.md" && \
+    mkdir -p bin && printf 'code\n' > "bin/massoh-style" && \
+    git add -A && git commit -qm "mixed exempt+non-exempt" ) >/dev/null 2>&1
+base16o="$(git -C "$G16o" rev-parse HEAD~1 2>/dev/null)"
+rc16o=0
+( cd "$G16o" && MASSOH_GATE_OVERRIDE="" "$GATE_CHECK" --ci "$base16o" >/dev/null 2>&1 ) || rc16o=$?
+check "T16o mixed paths (exempt+non-exempt) exits 1 without packet" "[ $rc16o -ne 0 ]"
+
+# T16p — CI mode checker blocks without packet; passes with packet (2 sub-checks)
+G16p="$TMP/g16p"; mkgaterepo "$G16p"
+( cd "$G16p" && mkdir -p bin && printf 'code\n' > "bin/something" && \
+    git add -A && git commit -qm "non-exempt" ) >/dev/null 2>&1
+base16p="$(git -C "$G16p" rev-parse HEAD~1 2>/dev/null)"
+# (a) No packet: exit 1
+rc16p_nopacket=0
+( cd "$G16p" && MASSOH_GATE_OVERRIDE="" "$GATE_CHECK" --ci "$base16p" >/dev/null 2>&1 ) || rc16p_nopacket=$?
+check "T16p-a CI mode exits 1 without packet"              "[ $rc16p_nopacket -ne 0 ]"
+# (b) With packet: exit 0
+mkgatepacket "$G16p"
+rc16p_packet=0
+( cd "$G16p" && MASSOH_GATE_OVERRIDE="" "$GATE_CHECK" --ci "$base16p" >/dev/null 2>&1 ) || rc16p_packet=$?
+check "T16p-b CI mode exits 0 with packet"                 "[ $rc16p_packet -eq 0 ]"
+
+# T16q — gate off in repo where only the hook exists (no CI file): exits 0 cleanly
+G16q="$TMP/g16q"; mkgaterepo "$G16q"
+( cd "$G16q" && "$MASSOH" gate on >/dev/null 2>&1 )
+# Remove the CI workflow file to simulate partial state
+rm -f "$G16q/.github/workflows/massoh-gate.yml"
+rc16q=0
+( cd "$G16q" && "$MASSOH" gate off >/dev/null 2>&1 ) || rc16q=$?
+check "T16q gate off exits 0 on partial state (no CI file)" "[ $rc16q -eq 0 ]"
+
+# T16r — safety-critical files unchanged after all T16 checks (mirrors T11i / T15l pattern)
+md5_massoh_t16_after="$(md5sum "$MASSOH" | awk '{print $1}')"
+md5_manifest_t16_after="$(md5sum "$REPO_ROOT/manifest.yml" | awk '{print $1}')"
+check "T16r bin/massoh checksum unchanged across T16 suite"    "[ '$md5_massoh_t16_before' = '$md5_massoh_t16_after' ]"
+check "T16r manifest.yml checksum unchanged across T16 suite"  "[ '$md5_manifest_t16_before' = '$md5_manifest_t16_after' ]"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]

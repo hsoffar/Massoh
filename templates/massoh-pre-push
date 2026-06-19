@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# massoh-gate:start
+# Massoh license-to-code gate — pre-push hook.
+# Installed by: massoh gate on  |  Removed by: massoh gate off
+# To manually remove: delete the lines between the massoh-gate start/end markers (inclusive).
+# Bypass: git push --no-verify  (this hook will not run; CI check still applies).
+# Emergency: MASSOH_GATE_OVERRIDE=1 git push
+set -euo pipefail
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+CHECKER="$REPO_ROOT/scripts/massoh-gate-check"
+if [ -x "$CHECKER" ]; then
+  "$CHECKER" < /dev/stdin
+else
+  printf '[massoh-gate] WARNING: checker not found at %s — gate skipped.\n' "$CHECKER" >&2
+fi
+# massoh-gate:end

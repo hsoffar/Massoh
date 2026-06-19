@@ -11,6 +11,37 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.9.0] - 2026-06-19
+### Added
+- **`massoh gate on` / `massoh gate off`** — per-repo, opt-in license-to-code gate that
+  mechanically enforces the "no code without an approved `04_implementation_packet.md`" guardrail.
+  - **`massoh gate on`**: installs a pre-push git hook (`.git/hooks/pre-push`) and copies the CI
+    workflow template (`.github/workflows/massoh-gate.yml`) into the current Massoh project. Both
+    are create-if-missing; the pre-push hook is append-safe — if a user hook already exists it
+    appends a namespaced `# massoh-gate:start … # massoh-gate:end` block without clobbering
+    existing content. Requires a git repo and a Massoh project (`.massoh` or `agent-project/`).
+  - **`massoh gate off`**: strips only the Massoh-namespaced block from the pre-push hook via awk
+    (same pattern as the global block removal in `bin/massoh`). If the hook was created from
+    scratch by `gate on`, it is removed entirely. The CI workflow file is left on disk (user-tracked;
+    owner deletes manually per NON_NEGOTIABLES).
+  - **Both commands are idempotent**: safe to run twice; no-op if already in target state.
+  - **`scripts/massoh-gate-check`** — shared POSIX-bash checker. Runs in two modes:
+    - Pre-push mode (default): reads `<local-ref> <local-sha> <remote-ref> <remote-sha>` from stdin.
+    - CI mode (`--ci <base-ref>`): diffs `<base-ref>...HEAD` via git.
+    - Exempt paths (never blocked): `*.md`, `.agent_tasks/*`, `agent-project/*`, `memory/*`,
+      `AGENT_SYNC.md`, `AGENT_BACKLOG.md`, `.massoh`, `LICENSE`, `.gitignore`, `.gitattributes`,
+      `.github/*`. Everything else (bin/, templates/, test/, manifest.yml, VERSION, …) is non-exempt.
+    - If any non-exempt path is changed AND no `.agent_tasks/*/04_implementation_packet.md` exists:
+      prints a blocking message and exits 1.
+    - Escape hatches: `MASSOH_GATE_OVERRIDE=1` (prints warning, exits 0 — checked first, before
+      any diff computation); `git push --no-verify` (standard git bypass; CI still checks).
+    - Degrades safely: null-SHA (first push), empty diff, detached HEAD all exit 0.
+  - **`templates/massoh-pre-push`** — hook wrapper installed into `.git/hooks/pre-push`.
+  - **`templates/massoh-gate.yml`** — CI workflow template (GitHub Actions).
+  - **`manifest.yml`** updated lockstep: new gate templates listed under `project_scaffold`;
+    comment clarifies `.git/hooks/pre-push` is NOT manifest-tracked (per-repo ephemeral).
+  - POSIX bash, `set -euo pipefail`, no non-portable deps. Zero LLM spend. Zero network.
+
 ## [0.8.0] - 2026-06-17
 ### Added
 - **`massoh meta`** — the self-improvement loop: read-only heuristic miner (zero LLM spend).
