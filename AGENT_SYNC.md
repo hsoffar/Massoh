@@ -4,7 +4,7 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-19 (TASK-2026-06-19-modularize-bin — **MERGED** PR #18 → main `fa83bcf`, VERSION 0.11.0. Owner set **auto-merge-on-green** for the 24h queue. bin/massoh now modular (12 lib/verbs); fan-out unlocked.)
+Last updated: 2026-06-19 (24h-queue fan-out — **MERGED**: #2 CI (PR #19), #4 intake (PR #20, v0.12.0). **#5 auto-ledger DEFERRED** (SubagentStop hook lacks token/time data). Driving #6 fleet rollup next; auto-merge-on-green active.)
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
@@ -82,6 +82,10 @@ on green; PRs reviewable post-hoc. See `AGENT_BACKLOG.md` §24h-plan.
 | 2026-06-19 | TASK-2026-06-19-modularize-bin: **APPROVE** — MB1–MB8 all independently verified (line refs in 06_review_result); 301/301 green (self-witnessed); pure-extraction byte-for-byte confirmed across all 12 verbs; safety-critical core (install/uninstall/backup/block) untouched in bin/massoh; no scope creep in product code; T-MB tests are substantive (non-vacuous); NB-1 deck/ untracked (non-blocking); NB-2 incorrect line range in handoff doc (non-blocking, code correct) | reviewer-qa |
 | 2026-06-19 | TASK-2026-06-19-modularize-bin: **MERGED** (squash) PR #18 → main `fa83bcf`; VERSION 0.11.0; bin/massoh 1662→216 lines, 12 verbs in lib/verbs/; fan-out unlocked | owner |
 | 2026-06-19 | **Owner revised policy → AUTO-MERGE-ON-GREEN** for the 24h queue (supersedes the "PRs open, no auto-merge" clause of the 2026-06-19 batch-authorization). Orchestrator squash-merges a batch-authorized PR once arch-safety + reviewer-qa pass AND the suite is green; owner reviews post-hoc and may revert. Still excludes other safety-critical files (manifest install/uninstall/block, NON_NEGOTIABLES, global-block) → those still need fresh sign-off. Revocable any time. | owner |
+| 2026-06-19 | TASK-2026-06-19-intake: **APPROVE** — IK1–IK11 all independently verified (line refs in 06_review_result); 327/327 green (self-witnessed, run twice); append-only proven at runtime (Queue/Done/Frozen rows md5 identical before/after; `grep -c 'sed -i' lib/verbs/intake.sh` = 0; no `> file`, no `mv`, no awk); scope clean (5 files: lib/verbs/intake.sh new, bin/massoh +2 additive lines, VERSION, CHANGELOG, test/run.sh +26 T-IK); AGENT_BACKLOG.md + AGENT_SYNC.md untouched in working tree; safety-critical files (manifest.yml, templates/, policies/, NON_NEGOTIABLES.md) untouched; T-IK-a–k all substantive; NB-1 T-IK-d ≤210 vs ≤200 (non-blocking, verified actual idea = 200 chars); NB-2 double-if pattern (correct, verbose); NB-3 doctor MISS (pre-install, expected). | reviewer-qa |
+| 2026-06-19 | TASK-2026-06-19-dogfood-ci (#2): **MERGED** PR #19 → main `323b361` — GitHub Actions runs test/run.sh on PR+push (fails-on-red). Exempt-path additive; self-reviewed (trivial CI yaml). | owner |
+| 2026-06-19 | TASK-2026-06-19-intake (#4): **MERGED** (squash) PR #20 → main `88c1e86`, VERSION 0.12.0; 327/327 green; append-only proven. | owner |
+| 2026-06-19 | TASK-2026-06-19-auto-ledger (#5): **DEFER** (arch-safety, not approved) — SubagentStop hook payload has no token_usage/duration/task-id (verified vs hook docs), and no SubagentStart to diff time; building it would write fake `0 0` rows and silently poison ledger/meta. Re-entry: (A) harness adds token+timing to SubagentStop, (B) SubagentStart event lands (wall-time only), (C) orchestrator calls `massoh ledger add` at stage completion (doable today — has real token+clock data). | architecture-safety |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -99,27 +103,33 @@ None.
 | TASK-2026-06-19-license-gate | merged | DONE — PR #16 → main `fc6dc0d`, VERSION 0.9.0 |
 | TASK-2026-06-19-massoh-board | merged | DONE — PR #17 → main `ce831e2`, VERSION 0.10.0 |
 | TASK-2026-06-19-modularize-bin | merged | DONE — PR #18 → main `fa83bcf`, VERSION 0.11.0 |
+| TASK-2026-06-19-dogfood-ci (#2) | merged | DONE — PR #19 → main `323b361` |
+| TASK-2026-06-19-intake (#4) | merged | DONE — PR #20 → main `88c1e86`, VERSION 0.12.0 |
+| TASK-2026-06-19-auto-ledger (#5) | 03_architecture_safety | DEFERRED — hook lacks token/time data; 3 re-entry conditions |
+| TASK-2026-06-19-fleet-rollup (#6) | 04_implementation_packet | LICENSED — implementer next (→ v0.13.0) |
 
 ## Last handoff
 ```
 Agent: massoh-reviewer-qa
 Mode: REVIEW_QA
-Task: TASK-2026-06-19-modularize-bin — modularize bin/massoh → lib/verbs/*.sh (v0.11.0)
+Task: TASK-2026-06-19-intake — massoh intake verb (v0.12.0)
 Status: APPROVED. 06_review_result.md written.
-Branch: feat/modularize-bin (working tree, uncommitted — per batch-auth terms)
-Decision: APPROVE. MB1–MB8 all independently verified. 301/301 green (self-witnessed).
-  Pure extraction confirmed: all 12 verb bodies diffed byte-for-byte against ce831e2 base.
-  Safety-critical core (install/uninstall/backup/block) stayed in bin/massoh. No scope creep.
-  T-MB test assertions are substantive (T-MB-a real symlink, T-MB-e real MASSOH_HOME override,
-  T-MB-d real install+remove+doctor, T-MB-f hardcoded string equality). T6 setup line addition
-  confirmed non-assertion (cp -rp lib overlay line 96 in test/run.sh).
+Branch: feat/intake (working tree, uncommitted — per batch-auth terms)
+Decision: APPROVE. IK1–IK11 all independently verified. 327/327 green (self-witnessed, twice).
+  Append-only proven at runtime: Queue/Done/Frozen rows md5-identical before/after intake run
+  (5e6b42fb6a02dfe980f43edc76b295ad before = after). grep -c 'sed -i' = 0. No > file, no mv,
+  no awk. Single printf >> on line 99 is the only BACKLOG write. MEMORY write || true on line 107.
+  Scope clean: 5 files only. AGENT_BACKLOG.md + AGENT_SYNC.md untouched in working tree.
+  Safety-critical files untouched. T-IK-a–k all substantive.
 Checks run (self-witnessed):
-  bash test/run.sh → ALL GREEN — 301 checks passed. PASS.
-  git diff ce831e2 per-verb comparison (all 12) → IDENTICAL function bodies. PASS.
-  bin/massoh dispatch case block → byte-identical to base. PASS.
-  grep set +e lib/verbs/*.sh → no results. PASS.
-  git diff ce831e2 -- templates/ agent-project/NON_NEGOTIABLES.md agent-os/policies/ → empty. PASS.
-Non-blocking: NB-1 deck/ untracked (not in commit scope). NB-2 handoff doc line range off-by-one.
-Next recommended agent: owner (merge feat/modularize-bin PR → main; deploy via massoh install)
-Next action: owner merges PR on feat/modularize-bin
+  bash test/run.sh → ALL GREEN — 327 checks passed (run twice). PASS.
+  grep -c 'sed -i' lib/verbs/intake.sh → 0. PASS.
+  grep bare '>'/mv/awk in intake.sh → empty. PASS.
+  Runtime append-only proof (temp repo) → Queue/Done/Frozen identical, md5 match. PASS.
+  git diff HEAD -- AGENT_BACKLOG.md → empty. PASS.
+  git diff HEAD -- manifest.yml templates/ agent-os/policies/ NON_NEGOTIABLES.md → empty. PASS.
+  bin/massoh diff → exactly +1 dispatch line + usage string update. PASS.
+Non-blocking: NB-1 T-IK-d ≤210 (actual idea = 200); NB-2 double-if pattern; NB-3 doctor MISS.
+Next recommended agent: orchestrator (auto-merge feat/intake per auto-merge-on-green policy)
+Next action: orchestrator squash-merges feat/intake PR → main; owner runs massoh update
 ```

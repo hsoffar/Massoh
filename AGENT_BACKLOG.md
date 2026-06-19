@@ -25,12 +25,12 @@ Ordered by value × dependency. **`bin/massoh` is the serialization bottleneck**
 
 | # | Pri | Item | bin? | Status |
 |---|-----|------|------|--------|
-| 1 | P1 | **`massoh board --push plane`** — task-viz → Plane (v0.10.0) | Y | **DOING** — implemented, in review (`feat/massoh-board`, 280/280) |
-| 2 | P1 | **Dogfood the gate + CI** — `massoh gate on` in this repo + GitHub Actions running `test/run.sh` (and the gate CI) on PRs | N | TODO |
-| 3 | P1 | **Modularize `bin/massoh` → `lib/verbs/*.sh`** (sourced) — *the leverage move; unblocks parallel verb dev* | Y | TODO |
-| 4 | P1 | **`massoh-intake` (idea triage)** — auto-queue + auto-prioritize + guarantee closure; never drop an idea. See [[massoh-idea-intake]] | Y | TODO |
-| 5 | P1 | **Auto-ledger via SubagentStop hook** — capture tokens/time per stage without manual `ledger add` | Y+hook | TODO |
-| 6 | P1 | **Fleet slice 2** — repo registry + read-only multi-repo rollup. Slice of [[massoh-fleet-vision]]; brief `agent-project/briefs/fleet-multi-repo-self-curing.md` | Y | TODO — after #1 merges |
+| 1 | P1 | **`massoh board --push plane`** — task-viz → Plane | Y | **DONE** — PR #17, v0.10.0 |
+| 2 | P1 | **Dogfood the gate + CI** — GitHub Actions running `test/run.sh` on PRs | N | **DONE** — PR #19 |
+| 3 | P1 | **Modularize `bin/massoh` → `lib/verbs/*.sh`** — the leverage move | Y | **DONE** — PR #18, v0.11.0 |
+| 4 | P1 | **`massoh intake` (idea triage)** — append-only inbox + priority. See [[massoh-idea-intake]] | Y | **DONE** — PR #20, v0.12.0 |
+| 5 | P1 | **Auto-ledger via SubagentStop hook** — capture tokens/time per stage | Y+hook | **DEFERRED** — hook payload lacks token/time/task-id; re-entry A/B/C in AGENT_SYNC |
+| 6 | P1 | **Fleet slice 2** — repo registry + read-only multi-repo rollup. Slice of [[massoh-fleet-vision]]; brief `agent-project/briefs/fleet-multi-repo-self-curing.md` | Y | **DOING** — licensed, implementer next (→ v0.13.0) |
 | 7 | P1 | **RMT slice 1** — policy doc + templates + `req-check` reference + skill (PROPOSE-ONLY). Spec `agent-project/briefs/RMT-requirements-traceability.md` | N (mostly) | TODO |
 | 8 | P2 | **`board` local renderer** (HTML/Obsidian) — offline slice, no Plane needed | Y | TODO — after #1 merges |
 | 9 | P2 | **Profiles + single `config.yml`** — archetypes; consolidate config | Y | TODO |
