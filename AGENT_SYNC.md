@@ -107,6 +107,9 @@ bats 6/6 + run.sh 463 green. Completed the 24h queue (12 features v0.9→v0.19; 
 
 | 2026-06-20 | **Owner granted 8h AWAY-AUTONOMY** for the Fleet observability + self-learning platform — proceed on recommended defaults, consult massoh-system-architect for arch calls, steer by the vision, auto-merge-on-green; bin/massoh edits for the new fleet verbs pre-authorized (arch-safety+reviewer+green still required per slice). PARK for owner return: irreversible ops, paid-API spend, engine ADOPTION of self-learning proposals (drafts only), engine-extraction sub-project #2, any new safety-critical risk class arch flags. | owner |
 
+| 2026-06-20 | Fleet platform: system-architect **GREEN-LIT** (`.agent_tasks/TASK-2026-06-20-fleet-observability/00_architecture_review.md`). Endorsed sequence (split 1a→1a-0 serve-skeleton first); architecture: thin loopback Python-stdlib server, **HTML escaped in bash** (reuse _board_html_escape), server = route-allowlist transport (NOT a file server), scripts/ wiring exists → no manifest edit. **PROCEED** read-only slices 0/1a/1b under N1–N7. **PARKED FOR OWNER:** 1c POST→intake (first HTTP-write = new safety-critical risk class) + slice-3 browser button + engine adoption — build forms read-only only. Defaults confirmed (stdlib-only no-pip; loopback host fixed; port 8787). | system-architect |
+| 2026-06-20 | Fleet **slice 0 (ledger-capture) DONE** — backfilled 10 REAL per-stage costs (from this session's subagent_tokens/duration; no fabrication) into ledger.tsv (14 rows); `massoh ledger` reports per-task + per-stage KPIs. Convention: orchestrator calls `massoh ledger add <task-id> <stage> <tokens> <seconds>` after each subagent. | owner(auto) |
+
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
 
