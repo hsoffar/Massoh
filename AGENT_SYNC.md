@@ -11,10 +11,14 @@ v0.1 post-extraction — validate that a portable, gated agent OS reduces build-
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**None active — paused (diminishing returns).** Follow-up inbox: **#13 (P0) DONE** (T6 offline, PR #29),
-**#15 (P1) DONE** (drift guard, PR #30). Remaining inbox is **P3 only** — #14 (verb load-order tidy) +
-#16 (full bats port) — both "someday", paused pending owner priority. Suite 465 green.
-Pending owner-optional: deploy v0.19.0 via `massoh update`; commit/gitignore `deck/`.
+**Massoh Fleet — observability + self-learning platform** (NEW; owner-approved design, brainstormed).
+Spec: `agent-project/briefs/fleet-observability-spec.md`. Building under an **8h owner-away autonomy
+grant**: proceed on recommended defaults, consult massoh-system-architect, steer by the vision,
+auto-merge-on-green. Build order: slice 0 ledger-capture → 1a index+repo KPI views+nav → 1b task
+drill-down → 1c start-task → 3 fleet learn. PARK for owner: irreversible ops, paid spend, engine
+adoption of self-learning proposals, engine-extraction (#2). Consulting system-architect before slice 0.
+
+**Last shipped:** TASK-2026-06-19-bats — scoped bats infra + T1 pilot. **Merged PR #28, VERSION 0.19.0**,
 
 **Last shipped:** TASK-2026-06-19-bats — scoped bats infra + T1 pilot. **Merged PR #28, VERSION 0.19.0**,
 bats 6/6 + run.sh 463 green. Completed the 24h queue (12 features v0.9→v0.19; #5 deferred).
@@ -100,6 +104,8 @@ bats 6/6 + run.sh 463 green. Completed the 24h queue (12 features v0.9→v0.19; 
 | 2026-06-19 | TASK-2026-06-19-bats (#12): **APPROVE** — BA1–BA7 all independently verified; bats 6/6 ok exit 0 (self-witnessed); run.sh 463/463 green exit 0 (self-witnessed); BA5: git diff --name-only main → 3 files only (.github/workflows/ci.yml, CHANGELOG.md, VERSION); bin/massoh/manifest.yml/templates/policies/NON_NEGOTIABLES.md/lib/verbs/test/run.sh all diff-clean; BA6: all 6 @tests invoke $MASSOH + assert real filesystem/exit conditions (T1-5 md5 snapshot read-only proof, T1-6 rm+drift+non-zero); BA7: per-test BATS_TEST_TMPDIR, no load/source of run.sh; ci.yml valid YAML, both steps present (run.sh line 24, bats line 27), bats install line 20 before both; VERSION 0.19.0; CHANGELOG [0.19.0] accurate; NB-1 redundant redirect on bats `run` line (non-breaking); NB-2 bats install before run.sh step (correct, mirrors jq pattern). | reviewer-qa |
 | 2026-06-19 | TASK-2026-06-19-fix-t6 (#13): **REQUEST CHANGES** — FT2 (assertion non-vacuous) CONFIRMED: live `grep -q 'update available'` on real doctor output; setup genuinely advances B6 ahead of W6 (independently reproduced). FT1 (offline) PROVEN: network-blocked run (GIT_CONFIG_GLOBAL proxy:9 + sshCommand=false) → 463/463 green. FT3/FT4/FT5/FT6 all PASS. BLOCK-1: `rm -rf "$S6"` (line 107) intermittently emits `cannot remove .../seed6/.git: Directory not empty` to stderr (~50-100% of runs); seed6 persists in $TMP until EXIT trap; no cross-test leak but noise is undisclosed (Guardrail A8 honesty). Fix: `rm -rf "$S6" 2>/dev/null \|\| true`. BLOCK-2: `memory/MEMORY.md` is modified in working tree (pre-existing intake entries, unrelated to T6); handoff claims test/run.sh is ONLY file modified — implementer must confirm it will NOT be staged. Scope: bin/massoh/manifest/policies/lib/verbs/VERSION all clean. Fast-track re-review on 2 fixes. | reviewer-qa |
 | 2026-06-19 | TASK-2026-06-19-fix-drift (#15): **APPROVE** — DG1–DG4 all independently verified (line refs in 06_review_result); 465/465 green (self-witnessed); drift-detection independently reproduced: T-DG-1 RED on temp edit (bin/massoh line 25 `'^schema_version:'`→`'^schema_XXX:'`), reverted clean (git diff bin/massoh empty); DG1 awk anchors confirmed unique (bin/massoh line 22 `manifest_schema_ver()` at col 0); DG2 sed range anchors confirmed unique (`^cat > "\$SR_HELPER"` = line 3031 only, `^SR_HELPER_EOF$` = line 3045 only, no self-reference); DG3 diff exits 0 on current codebase; DG4 T-DG-2 non-vacuous (_dg_bin 8 lines, _dg_diverged has DIVERGE_MARKER, diff exits non-zero); scope = test/run.sh only (git diff --name-only main excl. .agent_tasks); bin/massoh/manifest/lib/verbs/VERSION/CHANGELOG untouched. | reviewer-qa |
+
+| 2026-06-20 | **Owner granted 8h AWAY-AUTONOMY** for the Fleet observability + self-learning platform — proceed on recommended defaults, consult massoh-system-architect for arch calls, steer by the vision, auto-merge-on-green; bin/massoh edits for the new fleet verbs pre-authorized (arch-safety+reviewer+green still required per slice). PARK for owner return: irreversible ops, paid-API spend, engine ADOPTION of self-learning proposals (drafts only), engine-extraction sub-project #2, any new safety-critical risk class arch flags. | owner |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
