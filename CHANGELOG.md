@@ -11,6 +11,30 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.20.0] - 2026-06-20
+
+### Added
+- **`massoh fleet serve` — fleet dashboard content (slice 1a):** two GET pages rendered in bash
+  (Seam A: HTML escaping in bash via `_board_html_escape`; server is transport only — Seam B).
+  - `GET /` — fleet index: table of all opted-in repos with KPIs (open tasks, blocked, throughput/wk,
+    rework%, cycle-days, tokens, compute, last-handoff agent/mode, version); each repo links to its
+    repo page. Reads: `.agent_tasks/TASK-*/`, `AGENT_BACKLOG.md`, `agent-project/METRICS.md`,
+    `.agent_tasks/ledger.tsv`, `AGENT_SYNC.md`, `VERSION`. Read-only (FL1).
+  - `GET /repo/<name>` — repo view: KPI panel + inline kanban (reuses `_board_build_model` /
+    `_board_emit_local` logic) + task list (stage · last-handoff) + recent commits (`git log -n 10`)
+    + breadcrumb to `/` + sibling-repo A↔B nav.
+  - Route allowlist extended: `/` and `/repo/<name>`. `<name>` validated against the server-side
+    discovered-repo set (set-membership only — never joined onto a filesystem path). Unknown or
+    encoded-traversal names → 404. GET-only (POST → 404, N6).
+  - `scripts/massoh-dashboard`: Python stdlib only (N7); bash renderer called via `subprocess`
+    (no shell injection — paths are single-quoted). All HTML produced + escaped by bash.
+  - New bash rendering functions in `lib/verbs/fleet.sh`: `_fleet_render_index`,
+    `_fleet_render_repo`, `_fleet_repo_kpis`, `_fleet_render_board_inline`,
+    `_fleet_render_task_list`, `_fleet_render_commits`, `_fleet_html_header`, `_fleet_html_footer`,
+    `_fleet_kpi_item`, `_fleet_discover_repos_list`. All reuse existing KPI sources; no
+    recomputation in Python (N5).
+  - Tests T-FS-7 through T-FS-12 (additive; suite 476 → 488 green).
+
 ## [0.19.0] - 2026-06-19
 
 ### Added

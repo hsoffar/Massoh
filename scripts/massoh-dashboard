@@ -1,13 +1,22 @@
 #!/usr/bin/env python3
 """
-massoh-dashboard — Massoh Fleet observability dashboard (slice 1a-0 skeleton).
+massoh-dashboard — Massoh Fleet observability dashboard (slice 1a content).
 
 Security model:
   N1  Bind hard-coded to 127.0.0.1 ONLY. Host is NOT configurable.
-  N2  Route allowlist (NOT a static file server). Only GET / → 200 stub.
-      Every other path → 404. No filesystem path resolution from URLs.
+  N2  Route allowlist (NOT a static file server). Routes:
+        GET /           → fleet index (bash-rendered HTML)
+        GET /repo/<name> → per-repo view (bash-rendered HTML)
+      <name> is validated against the discovered-repo set (set-membership only;
+      <name> is NEVER joined onto a filesystem path).  Unknown name → 404.
+      Everything else → 404.
   N3  Clean lifecycle: foreground, blocking, SIGINT/SIGTERM → clean shutdown.
       Never auto-daemonized.
+  N4  HTML is rendered + escaped by bash (fleet.sh _fleet_render_* functions).
+      This server adds ZERO HTML templating / interpolation of its own.
+  N5  KPIs / discovery come from existing bash verbs (fleet.sh, board.sh, …).
+      No business logic in the server.
+  N6  Zero browser token spend. GET-only (POST → 404).
   N7  Python 3 stdlib ONLY — no pip, no PyYAML, no external deps.
 
 Usage (called by lib/verbs/fleet.sh):
@@ -16,40 +25,190 @@ Usage (called by lib/verbs/fleet.sh):
 
 import argparse
 import http.server
+import os
+import re
+import shutil
 import signal
 import socketserver
+import subprocess
 import sys
 import threading
 
+# ---------------------------------------------------------------------------
 # N1: loopback-only — hard-coded; NOT derived from CLI args.
-# This constant is the single source of truth for the bind address.
-# The server NEVER binds to any other address (not configurable by design).
-# The value is intentionally NOT 0.0.0.0 and NOT the empty string "".
+# ---------------------------------------------------------------------------
 BIND_HOST = "127.0.0.1"
-
 DEFAULT_PORT = 8787
 
-# N2: route allowlist — the ONLY allowed routes.
-# Anything outside this set → 404. No path is ever turned into a filesystem path.
-_ALLOWED_ROUTES = {
-    "/": "text/html; charset=utf-8",
-}
+# ---------------------------------------------------------------------------
+# Discovery helpers (Seam B — server discovers repos, passes to bash renderer)
+# ---------------------------------------------------------------------------
 
-_STUB_HTML = """\
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Massoh Fleet</title>
-  <!-- massoh-generated -->
-</head>
-<body>
-  <h1>Massoh Fleet</h1>
-  <p>Dashboard coming soon. (Slice 1a skeleton — prove bind + lifecycle first.)</p>
-</body>
-</html>
-"""
+def _find_massoh_home() -> str:
+    """Locate the Massoh home directory (where scripts/ lives)."""
+    env_home = os.environ.get("MASSOH_HOME", "")
+    if env_home and os.path.isdir(env_home):
+        return env_home
+    # Resolve relative to this script's location: scripts/ → parent = MASSOH_HOME
+    here = os.path.realpath(__file__)
+    return os.path.dirname(os.path.dirname(here))
+
+
+def _fleet_tsv_path() -> str:
+    """Return the fleet.tsv registry path (matches fleet.sh's _FLEET_TSV_DEFAULT)."""
+    env = os.environ.get("MASSOH_FLEET_TSV", "")
+    if env:
+        return env
+    return os.path.expanduser("~/.claude/massoh/fleet.tsv")
+
+
+def _discover_repos() -> list:
+    """
+    Discover opted-in repos using the same priority as cmd_fleet in fleet.sh:
+      1. MASSOH_FLEET_ROOT env var → find -maxdepth 3 for .massoh
+      2. fleet.tsv registry
+
+    Returns a list of absolute repo paths (validated as directories).
+    <name> is NEVER derived from any HTTP path — this is the server-side set.
+    """
+    repos = []
+
+    fleet_root = os.environ.get("MASSOH_FLEET_ROOT", "")
+    if fleet_root and os.path.isdir(fleet_root):
+        # Mirror fleet.sh find logic (maxdepth 3, cap 200)
+        try:
+            result = subprocess.run(
+                ["find", fleet_root, "-maxdepth", "3", "-name", ".massoh", "-type", "f"],
+                capture_output=True, text=True, timeout=10
+            )
+            for line in result.stdout.splitlines()[:200]:
+                repo = line.rstrip("/\n")
+                if repo.endswith("/.massoh"):
+                    repo = repo[: -len("/.massoh")]
+                if os.path.isdir(repo):
+                    repos.append(repo)
+        except Exception:
+            pass
+        return repos
+
+    tsv = _fleet_tsv_path()
+    if os.path.isfile(tsv):
+        try:
+            with open(tsv, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if len(line) > 4096:
+                        continue
+                    if os.path.isdir(line):
+                        repos.append(line)
+        except Exception:
+            pass
+
+    return repos
+
+
+def _build_repo_name_map(repos: list) -> dict:
+    """
+    Build a mapping: basename → absolute_path.
+
+    N2: <name> in the URL is looked up IN THIS MAP only.
+    It is never os.path.join()-ed onto any filesystem root.
+    Repos with duplicate basenames: last one wins (deterministic; same as fleet order).
+    """
+    m = {}
+    for path in repos:
+        name = os.path.basename(path.rstrip("/"))
+        m[name] = path
+    return m
+
+
+# ---------------------------------------------------------------------------
+# Bash renderer invocation (Seam A — bash produces + escapes HTML)
+# ---------------------------------------------------------------------------
+
+def _run_bash_renderer(massoh_home: str, cmd_args: list, env: dict = None) -> bytes:
+    """
+    Shell out to bash and capture stdout.
+    cmd_args: list of strings passed to bash -c (via a joined inline script).
+
+    We exec: bash -c '…' with the MASSOH_HOME env set so that the sourced
+    lib/verbs/fleet.sh can find board.sh (also sourced inline).
+
+    N4: the bash renderer is responsible for all HTML escaping.
+    This function is purely a transport; it adds no interpolation.
+    N6: no paid API calls; no agent exec.
+    """
+    fleet_sh = os.path.join(massoh_home, "lib", "verbs", "fleet.sh")
+    board_sh = os.path.join(massoh_home, "lib", "verbs", "board.sh")
+
+    if not os.path.isfile(fleet_sh) or not os.path.isfile(board_sh):
+        return b"<!-- massoh-generated --><html><body><p>renderer not found</p></body></html>"
+
+    # Build a minimal inline bash script:
+    #   1. set -euo pipefail (safety)
+    #   2. define stubs for say/die/mver (not needed for rendering, but sourced files reference them)
+    #   3. source board.sh (for _board_html_escape, _board_build_model, etc.)
+    #   4. source fleet.sh (for _fleet_render_*)
+    #   5. run the requested function call
+    func_call = " ".join(cmd_args)  # already shell-safe (see callers)
+
+    script = (
+        "set -euo pipefail\n"
+        "say() { :; }\n"
+        "die() { printf '%s\\n' \"$*\" >&2; exit 1; }\n"
+        "mver() { cat \"${MASSOH_HOME}/VERSION\" 2>/dev/null || printf '?'; }\n"
+        "msha() { git -C \"${MASSOH_HOME}\" rev-parse --short HEAD 2>/dev/null || printf '?'; }\n"
+        f"source {_sh_quote(board_sh)}\n"
+        f"source {_sh_quote(fleet_sh)}\n"
+        f"{func_call}\n"
+    )
+
+    run_env = os.environ.copy()
+    run_env["MASSOH_HOME"] = massoh_home
+    if env:
+        run_env.update(env)
+
+    try:
+        result = subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True,
+            timeout=30,
+            env=run_env,
+        )
+        if result.returncode == 0:
+            return result.stdout
+        # On bash error: return a minimal error page (still HTML-safe: no user input here)
+        return (
+            b"<!-- massoh-generated -->"
+            b"<html><body><h1>Render error</h1><p>The bash renderer exited non-zero.</p></body></html>"
+        )
+    except subprocess.TimeoutExpired:
+        return (
+            b"<!-- massoh-generated -->"
+            b"<html><body><h1>Render timeout</h1><p>Renderer timed out (30s).</p></body></html>"
+        )
+    except Exception:
+        return (
+            b"<!-- massoh-generated -->"
+            b"<html><body><h1>Render failed</h1></body></html>"
+        )
+
+
+def _sh_quote(s: str) -> str:
+    """Single-quote a string for safe shell interpolation (path only, no user input)."""
+    return "'" + s.replace("'", "'\\''") + "'"
+
+
+# ---------------------------------------------------------------------------
+# HTTP handler
+# ---------------------------------------------------------------------------
+
+# N2: valid /repo/<name> pattern — name is URL-decoded and then looked up
+# in the server-side repo set.  The regex here only allows safe characters;
+# anything outside this set → 404 before the set-membership check.
+_REPO_NAME_RE = re.compile(r"^/repo/([A-Za-z0-9_.~\-]+)$")
 
 
 class _FleetHandler(http.server.BaseHTTPRequestHandler):
@@ -57,11 +216,15 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
     N2: Custom handler with a fixed route allowlist.
     Does NOT extend SimpleHTTPRequestHandler; never calls translate_path().
     No byte of the caller-supplied path is ever os.path.join()-ed onto a
-    filesystem root.  Anything not in _ALLOWED_ROUTES → 404.
-    GET only in this skeleton (all other methods → 404).
+    filesystem root.  Anything not in the allowlist → 404.
+    GET-only (all other methods → 404).
     """
 
-    def log_message(self, fmt, *args):  # noqa: D102 — suppress default access log to stderr
+    # Set by the factory before any request is handled.
+    massoh_home: str = ""
+    repo_name_map: dict = {}  # name → abs_path; built once at startup
+
+    def log_message(self, fmt, *args):  # noqa: D102 — suppress default access log
         pass
 
     def _send_404(self):
@@ -72,49 +235,119 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self):  # noqa: N802 — name mandated by BaseHTTPRequestHandler
-        # N2: strip query string / fragment before allowlist lookup.
-        # We never parse the path into a filesystem location.
-        path = self.path.split("?", 1)[0].split("#", 1)[0]
+    def _send_html(self, body: bytes):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
-        if path not in _ALLOWED_ROUTES:
-            # N2: anything not in the allowlist → 404 with zero reads.
-            self._send_404()
+    def do_GET(self):  # noqa: N802
+        # N2: strip query string / fragment; we never parse the path into a filesystem location.
+        raw_path = self.path.split("?", 1)[0].split("#", 1)[0]
+
+        # Route: GET /
+        if raw_path == "/":
+            body = self._render_index()
+            self._send_html(body)
             return
 
-        content_type = _ALLOWED_ROUTES[path]
-        if path == "/":
-            body = _STUB_HTML.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+        # Route: GET /repo/<name>
+        m = _REPO_NAME_RE.match(raw_path)
+        if m:
+            # URL-decode the name (only percent-encoded safe chars; no path use).
+            import urllib.parse
+            repo_name = urllib.parse.unquote(m.group(1))
+
+            # N2: SET-MEMBERSHIP CHECK — validate against the discovered-repo set.
+            # <repo_name> is NEVER joined onto a filesystem path.
+            # Only the path stored in self.repo_name_map[repo_name] is used.
+            if repo_name not in self.repo_name_map:
+                self._send_404()
+                return
+
+            repo_path = self.repo_name_map[repo_name]
+            body = self._render_repo(repo_name, repo_path)
+            self._send_html(body)
             return
 
-        # Fallthrough (defensive): anything else not explicitly handled → 404.
+        # Anything else → 404 (N2: route allowlist)
         self._send_404()
 
     def do_HEAD(self):  # noqa: N802
         self._send_404()
 
     def do_POST(self):  # noqa: N802
+        # N6: GET-only; no POST handling in this slice (slice 1c is owner-gated)
         self._send_404()
 
+    # ------------------------------------------------------------------
+    # Renderers (delegate all HTML production to bash — Seam A)
+    # ------------------------------------------------------------------
 
-def _make_server(port: int) -> socketserver.TCPServer:
-    """
-    N1: bind to BIND_HOST (127.0.0.1) ONLY.
-    N3: allow_reuse_address=False (default) to fail fast if port is in use.
-    """
+    def _render_index(self) -> bytes:
+        """
+        Render the fleet index page.
+        Passes the fleet root / tsv path to the bash renderer.
+        Seam A: bash (_fleet_render_index) produces + escapes all HTML.
+        """
+        fleet_root = os.environ.get("MASSOH_FLEET_ROOT", "")
+        tsv_path = _fleet_tsv_path()
+
+        if fleet_root and os.path.isdir(fleet_root):
+            # Root-scan mode (tsv_mode=0)
+            func_call = f"_fleet_render_index {_sh_quote(fleet_root)} 0"
+        elif os.path.isfile(tsv_path):
+            # TSV registry mode (tsv_mode=1)
+            func_call = f"_fleet_render_index {_sh_quote(tsv_path)} 1"
+        else:
+            func_call = "_fleet_render_index '' 0"
+
+        return _run_bash_renderer(self.massoh_home, [func_call])
+
+    def _render_repo(self, repo_name: str, repo_path: str) -> bytes:
+        """
+        Render a per-repo view.
+        repo_path comes from the server-side map (trusted); never from the URL directly.
+        Seam A: bash (_fleet_render_repo) produces + escapes all HTML.
+        """
+        # Build the all-repos list for sibling nav (newline-separated paths)
+        all_repos_lines = "\n".join(self.repo_name_map.values())
+
+        func_call = (
+            f"_fleet_render_repo "
+            f"{_sh_quote(repo_path)} "
+            f"{_sh_quote(repo_name)} "
+            f"{_sh_quote(all_repos_lines)}"
+        )
+        return _run_bash_renderer(self.massoh_home, [func_call])
+
+
+# ---------------------------------------------------------------------------
+# Server lifecycle
+# ---------------------------------------------------------------------------
+
+def _make_handler_class(massoh_home: str, repo_name_map: dict):
+    """Create a handler class with the massoh_home and repo_name_map baked in."""
+
+    class BoundHandler(_FleetHandler):
+        pass
+
+    BoundHandler.massoh_home = massoh_home
+    BoundHandler.repo_name_map = repo_name_map
+    return BoundHandler
+
+
+def _make_server(port: int, handler_class) -> socketserver.TCPServer:
+    """N1: bind to BIND_HOST (127.0.0.1) ONLY."""
     socketserver.TCPServer.allow_reuse_address = False
-    server = socketserver.TCPServer((BIND_HOST, port), _FleetHandler)
+    server = socketserver.TCPServer((BIND_HOST, port), handler_class)
     return server
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Massoh Fleet dashboard — 127.0.0.1 only, GET /, stdlib-only."
+        description="Massoh Fleet dashboard — 127.0.0.1 only, GET / + /repo/<name>, stdlib-only."
     )
     # N1: --port is the ONLY knob. Host is NOT configurable.
     parser.add_argument(
@@ -130,17 +363,21 @@ def main() -> int:
         print(f"massoh-dashboard: invalid port {port}", file=sys.stderr)
         return 1
 
+    massoh_home = _find_massoh_home()
+
+    # Discover repos at startup (server-side set; not from HTTP input — N2).
+    repos = _discover_repos()
+    repo_name_map = _build_repo_name_map(repos)
+
+    handler_class = _make_handler_class(massoh_home, repo_name_map)
+
     try:
-        server = _make_server(port)
+        server = _make_server(port, handler_class)
     except OSError as exc:
         print(f"massoh-dashboard: cannot bind {BIND_HOST}:{port}: {exc}", file=sys.stderr)
         return 1
 
     # N3: clean SIGINT/SIGTERM shutdown — no lingering process.
-    # We run serve_forever() in a daemon thread so that the main thread can
-    # block on a threading.Event and wake up on signal delivery.  This avoids
-    # the deadlock that occurs when signal handlers call server.shutdown() from
-    # inside the serve_forever() loop (which would wait on itself).
     _stop_event = threading.Event()
 
     def _shutdown(signum, frame):  # noqa: ARG001
@@ -150,12 +387,12 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _shutdown)
 
     # Start serve_forever() on a daemon thread.
-    # Daemon=True means it won't block process exit if main() returns first.
     _server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     _server_thread.start()
 
     # N3: print the URL before blocking.
     print(f"massoh-dashboard: serving at http://{BIND_HOST}:{port}/", flush=True)
+    print(f"massoh-dashboard: {len(repos)} repo(s) discovered.", flush=True)
     print("massoh-dashboard: press Ctrl-C or send SIGTERM to stop.", flush=True)
 
     # Block the main thread until a signal arrives.
