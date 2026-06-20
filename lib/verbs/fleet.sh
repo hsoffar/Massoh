@@ -388,7 +388,57 @@ EOF2
   printf '<h2>Recent commits</h2>\n'
   _fleet_render_commits "$repo"
 
+  # Start a task (read-only panel — POST is PARKED, owner-gated)
+  _fleet_render_start_task_panel "$repo" "$repo_name"
+
   _fleet_html_footer
+}
+
+# _fleet_render_start_task_panel <repo_abs_path> <repo_name>
+# Render a read-only "Start a task" copy-paste panel.
+# Shows the two shell commands an owner can run from their own terminal.
+# NO POST handler — the submit path is PARKED pending owner sign-off (slice 1c §4 R3).
+# N4: repo_abs_path and repo_name are escaped via _board_html_escape before interpolation.
+# N6: no server-side exec, no agent call, no write, no network.
+_fleet_render_start_task_panel() {
+  local repo="$1" repo_name="$2"
+
+  # N4: escape both the abs-path and the name before any HTML interpolation.
+  local esc_path esc_name
+  esc_path="$(_board_html_escape "$repo")"
+  esc_name="$(_board_html_escape "$repo_name")"
+
+  printf '<section style="margin-top:1.5rem;">\n'
+  printf '<h2>Start a task</h2>\n'
+  printf '<p style="font-size:.84rem;color:#374151;margin-bottom:.75rem;">'
+  printf 'Run one of these commands in your own shell to queue or start a task in '
+  printf '<strong>%s</strong>:</p>\n' "$esc_name"
+
+  printf '<div style="background:#fff;border-radius:.5rem;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:.85rem 1rem;font-size:.84rem;">\n'
+
+  # Option 1: queue via intake
+  printf '<p style="margin:.3rem 0 .2rem;font-weight:600;color:#374151;">Queue it (append-only inbox):</p>\n'
+  printf '<pre style="background:#f3f4f6;border-radius:.375rem;padding:.5rem .75rem;font-size:.82rem;overflow-x:auto;margin:.2rem 0 .75rem;">'
+  printf '<code>cd %s &amp;&amp; massoh intake &quot;&lt;your idea&gt;&quot;</code>' "$esc_path"
+  printf '</pre>\n'
+
+  # Option 2: build interactively
+  printf '<p style="margin:.3rem 0 .2rem;font-weight:600;color:#374151;">Build it interactively:</p>\n'
+  printf '<pre style="background:#f3f4f6;border-radius:.375rem;padding:.5rem .75rem;font-size:.82rem;overflow-x:auto;margin:.2rem 0 .75rem;">'
+  printf '<code>massoh work %s</code>' "$esc_name"
+  printf '</pre>\n'
+  printf '<p style="margin:.1rem 0 .2rem;font-size:.8rem;color:#6b7280;">then, inside the agent session:</p>\n'
+  printf '<pre style="background:#f3f4f6;border-radius:.375rem;padding:.5rem .75rem;font-size:.82rem;overflow-x:auto;margin:.2rem 0;">'
+  printf '<code>/start-task &quot;&lt;your idea&gt;&quot;</code>'
+  printf '</pre>\n'
+
+  # Parked note (N6 / §4 R3 — POST is owner-gated)
+  printf '<p style="margin-top:.85rem;font-size:.78rem;color:#9ca3af;font-style:italic;">'
+  printf 'Live one-click submit from the dashboard is owner-gated &mdash; parked pending sign-off.'
+  printf '</p>\n'
+
+  printf '</div>\n'
+  printf '</section>\n'
 }
 
 # _fleet_kpi_item <label> <value>

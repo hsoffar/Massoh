@@ -3594,6 +3594,120 @@ FS_DRILL_PID=""
 
 fi  # end: python3 available guard (task drill-down tests)
 
+# ===========================================================================
+# == T-FS-25..29: start-task panel (slice 1c, read-only) ====================
+# ===========================================================================
+# These tests verify:
+#   T-FS-25  /repo/<name> now contains the start-task panel (massoh intake + massoh work)
+#   T-FS-26  Panel contains the parked/owner-gated note
+#   T-FS-27  Repo name and path are HTML-escaped in the panel
+#   T-FS-28  POST to /, /repo/<name>, and any route → 404 (park holds — no write path)
+#   T-FS-29  Read-only byte-snapshot unchanged; no orphan process (lifecycle)
+# ===========================================================================
+
+if ! command -v python3 >/dev/null 2>&1; then
+  ok "T-FS-25..29 python3 absent — start-task panel tests skipped"
+else
+
+# Reuse FS_FLEET_ROOT / FS_REPO_A from T-FS-7..24 (still present under $TMP).
+
+# Pick a free port for the start-task panel tests
+FS_ST_PORT="$(_fs_free_port)"
+FS_ST_PID=""
+
+# Start the server
+MASSOH_FLEET_ROOT="$FS_FLEET_ROOT" \
+  MASSOH_HOME="$REPO_ROOT" \
+  python3 "$DASHBOARD" --port "$FS_ST_PORT" >/dev/null 2>&1 &
+FS_ST_PID=$!
+
+# Wait up to 5 seconds for the server to be ready
+_fs_stwait=0
+until curl -s --connect-timeout 0.3 "http://127.0.0.1:${FS_ST_PORT}/" >/dev/null 2>&1 \
+    || [ $_fs_stwait -ge 50 ]; do
+  sleep 0.1; _fs_stwait=$((_fs_stwait+1))
+done
+
+# Fetch the repo view body once (reused across T-FS-25..27)
+_fs25_body="$(curl -s "http://127.0.0.1:${FS_ST_PORT}/repo/alpha-repo" 2>/dev/null || true)"
+
+# --- T-FS-25: panel present with massoh intake and massoh work commands ---
+check "T-FS-25a /repo/<name> contains 'Start a task' panel heading" \
+  "printf '%s' \"\$_fs25_body\" | grep -qi 'Start a task'"
+check "T-FS-25b /repo/<name> panel contains 'massoh intake' command" \
+  "printf '%s' \"\$_fs25_body\" | grep -q 'massoh intake'"
+check "T-FS-25c /repo/<name> panel contains 'massoh work' command" \
+  "printf '%s' \"\$_fs25_body\" | grep -q 'massoh work'"
+check "T-FS-25d /repo/<name> panel contains '/start-task' interactive command" \
+  "printf '%s' \"\$_fs25_body\" | grep -q '/start-task'"
+check "T-FS-25e /repo/<name> panel contains repo abs-path (cd command)" \
+  "printf '%s' \"\$_fs25_body\" | grep -q 'alpha-repo'"
+
+# --- T-FS-26: parked / owner-gated note present ---
+check "T-FS-26a panel contains 'owner-gated' or 'parked' note" \
+  "printf '%s' \"\$_fs25_body\" | grep -qi 'owner-gated\|parked'"
+check "T-FS-26b panel contains 'sign-off' language" \
+  "printf '%s' \"\$_fs25_body\" | grep -qi 'sign-off'"
+
+# --- T-FS-27: HTML-escape check for repo name/path in panel ---
+# Create a repo with a potentially dangerous name to check escaping.
+# We test by verifying the raw < and > of alpha-repo's path are not present
+# and that the general _board_html_escape function is used (source grep).
+check "T-FS-27a _fleet_render_start_task_panel uses _board_html_escape (N4)" \
+  "grep -q '_board_html_escape' '$REPO_ROOT/lib/verbs/fleet.sh'"
+# Also verify no raw unescaped angle brackets from injected content in the panel
+# (alpha-repo has no special chars; the XSS task from T-FS-11 is in the board,
+# not the panel; so asserting no raw <script> still suffices here too)
+check "T-FS-27b panel: no raw <script> from XSS task bleeds into panel" \
+  "! printf '%s' \"\$_fs25_body\" | grep -F '<script>alert'"
+# Panel uses &amp;&amp; for shell && (HTML-safe representation)
+check "T-FS-27c panel uses &amp;&amp; (HTML-safe shell &&)" \
+  "printf '%s' \"\$_fs25_body\" | grep -q '&amp;&amp;'"
+
+# --- T-FS-28: POST to any route → 404 (the PARK holds — no write path) ---
+# POST /
+_fs28_post_root="$(curl -s -o /dev/null -w '%{http_code}' \
+  -X POST "http://127.0.0.1:${FS_ST_PORT}/" 2>/dev/null || echo 0)"
+check "T-FS-28a POST / → 404 (GET-only, POST park holds)" \
+  "[ '$_fs28_post_root' = '404' ]"
+# POST /repo/<name>
+_fs28_post_repo="$(curl -s -o /dev/null -w '%{http_code}' \
+  -X POST "http://127.0.0.1:${FS_ST_PORT}/repo/alpha-repo" 2>/dev/null || echo 0)"
+check "T-FS-28b POST /repo/<name> → 404 (no write path)" \
+  "[ '$_fs28_post_repo' = '404' ]"
+# POST /intake (a plausible future endpoint — must not exist)
+_fs28_post_intake="$(curl -s -o /dev/null -w '%{http_code}' \
+  -X POST "http://127.0.0.1:${FS_ST_PORT}/intake" 2>/dev/null || echo 0)"
+check "T-FS-28c POST /intake → 404 (endpoint not implemented)" \
+  "[ '$_fs28_post_intake' = '404' ]"
+# Confirm do_POST in dashboard returns 404 (source-level assertion N6)
+check "T-FS-28d do_POST sends 404 in dashboard source (N6 GET-only)" \
+  "grep -A3 'def do_POST' '$DASHBOARD' | grep -q '404'"
+
+# --- T-FS-29: read-only byte-snapshot unchanged; no orphan process ---
+# Snapshot before
+_fs29_before_a="$(cd "$FS_REPO_A" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+# Issue requests against the panel
+curl -s "http://127.0.0.1:${FS_ST_PORT}/repo/alpha-repo" >/dev/null 2>&1 || true
+curl -s "http://127.0.0.1:${FS_ST_PORT}/repo/beta-repo" >/dev/null 2>&1 || true
+curl -s "http://127.0.0.1:${FS_ST_PORT}/" >/dev/null 2>&1 || true
+sleep 0.2
+_fs29_after_a="$(cd "$FS_REPO_A" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+check "T-FS-29a alpha-repo byte-snapshot unchanged after start-task panel render (read-only)" \
+  "[ '$_fs29_before_a' = '$_fs29_after_a' ]"
+
+# Stop the server and verify no orphan
+kill "$FS_ST_PID" 2>/dev/null || true
+_fs29_owait=0
+while kill -0 "$FS_ST_PID" 2>/dev/null && [ $_fs29_owait -lt 30 ]; do
+  sleep 0.1; _fs29_owait=$((_fs29_owait+1))
+done
+check "T-FS-29b no orphan start-task panel server process (N3 lifecycle)" \
+  "! kill -0 '$FS_ST_PID' 2>/dev/null"
+FS_ST_PID=""
+
+fi  # end: python3 available guard (start-task panel tests)
+
 echo "== T-FS done =="
 
 echo

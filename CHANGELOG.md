@@ -11,6 +11,22 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.22.0] - 2026-06-20
+
+### Added
+- **`massoh fleet serve` — start-task panel (slice 1c, read-only):** adds a "Start a task"
+  copy-paste panel to the per-repo view (`/repo/<name>`) in the Fleet dashboard.
+  - Renders the two shell commands an owner can run from their own terminal:
+    `cd <abs-path> && massoh intake "<your idea>"` (queue) and
+    `massoh work <repo>` + `/start-task "<your idea>"` (interactive).
+  - Repo absolute path and name are HTML-escaped via `_board_html_escape` (N4).
+  - A muted note clarifies that live one-click submit is owner-gated and parked.
+  - **NO POST handler added — POST → 404 still holds** (the HTTP-input-to-write
+    path remains PARKED pending owner sign-off per §4 R3 of the architecture review).
+  - Implemented via new `_fleet_render_start_task_panel` bash function (Seam A).
+  - Tests T-FS-25 through T-FS-29 (additive; exercise panel content, POST→404,
+    read-only byte-snapshot, loopback, and no-orphan invariants).
+
 ## [0.21.0] - 2026-06-20
 
 ### Added
