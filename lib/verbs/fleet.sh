@@ -906,6 +906,253 @@ _fleet_serve() {
   exec python3 "$dashboard" --port "$port"
 }
 
+# ---------------------------------------------------------------------------
+# cmd_fleet_learn — aggregate cross-repo lesson candidates (FLN1–FLN8)
+#
+# Reads LEARNINGS.proposed.md + META.proposed.md from each discovered repo
+# (read-only; || true on every read — FLN6).  Clusters lessons by recurrence
+# and writes a consolidated candidates doc to THIS repo only (FLN3/FLN4).
+# ZERO LLM / ZERO network / ZERO spend (FLN1).
+# ---------------------------------------------------------------------------
+cmd_fleet_learn() {
+  set -euo pipefail
+
+  # FLN3 / FLN8: single named write target + SAFETY comment; Pattern A (sentinel-regenerate)
+  local repo
+  repo="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
+  local FLEET_LEARNINGS="$repo/agent-project/FLEET_LEARNINGS.proposed.md"  # SAFETY: only permitted write in cmd_fleet_learn
+
+  # FLN8: recurrence threshold — NAMED CONSTANT (never a magic number)
+  local FLEET_REPEAT_THRESHOLD=2
+
+  local write_proposals=0 fleet_root="" tsv_file=""
+
+  while [ $# -gt 0 ]; do case "$1" in
+    --write-proposals) write_proposals=1;;
+    --no-write)        write_proposals=0;;
+    --root)            shift; fleet_root="${1:-}";;
+    --help|-h)
+      printf 'massoh fleet learn [--write-proposals|--no-write] [--root <dir>]\n'
+      printf '\n'
+      printf 'Aggregate cross-repo lesson candidates (ZERO LLM, read-only on discovered repos).\n'
+      printf 'With --write-proposals: write consolidated candidates to agent-project/FLEET_LEARNINGS.proposed.md\n'
+      printf 'Without --write-proposals (default): print candidate summary to stdout only.\n'
+      return 0
+      ;;
+    *) die "unknown fleet learn flag: $1";;
+  esac; shift; done
+
+  # env var fallback for fleet root
+  [ -z "$fleet_root" ] && fleet_root="${MASSOH_FLEET_ROOT:-}"
+  tsv_file="${MASSOH_FLEET_TSV:-$_FLEET_TSV_DEFAULT}"
+
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+  local ver
+  ver="$(mver 2>/dev/null || cat "$repo/VERSION" 2>/dev/null || printf 'unknown')"
+
+  # -------------------------------------------------------------------------
+  # Discover repos (same logic as cmd_fleet)
+  # -------------------------------------------------------------------------
+  local repo_list=""
+  if [ -n "$fleet_root" ]; then
+    if [ -d "$fleet_root" ]; then
+      local maxdepth
+      maxdepth="$(_fleet_maxdepth)"
+      repo_list="$(find "$fleet_root" -maxdepth "$maxdepth" -name '.massoh' -type f \
+        2>/dev/null | head -n 200 | sed 's|/\.massoh$||' || true)"
+    fi
+  elif [ -f "$tsv_file" ]; then
+    while IFS= read -r _fl_line; do
+      case "$_fl_line" in ''|\#*) continue;; esac
+      [ "${#_fl_line}" -gt 4096 ] && continue
+      [ -d "$_fl_line" ] || continue
+      repo_list="${repo_list}${_fl_line}
+"
+    done < "$tsv_file"
+  fi
+
+  # -------------------------------------------------------------------------
+  # Per-repo lesson extraction (FLN2: read-only; FLN6: || true + [ -f ] guard)
+  # Lesson format collected: "<lesson_text>\t<repo_basename>"
+  # -------------------------------------------------------------------------
+  # all_lessons: newline-sep "<sanitized_lesson_text>\t<repo_basename>"
+  local all_lessons="" skip_report=""
+
+  local rp
+  while IFS= read -r rp; do
+    [ -n "$rp" ] || continue
+    [ -d "$rp" ] || continue
+
+    # FLN5: use basename only (never abs-path in output) — leak guard
+    local rp_name
+    rp_name="$(basename "$rp" 2>/dev/null || printf '%s' "$rp")"
+
+    local learnings_file="${rp}/agent-project/LEARNINGS.proposed.md"
+    local meta_file="${rp}/agent-project/META.proposed.md"
+
+    local found_any_file=0
+
+    # Read LEARNINGS.proposed.md — FLN2: only used as arg to read commands
+    if [ -f "$learnings_file" ]; then
+      found_any_file=1
+      # Extract lesson lines (lines starting with "- "), strip leading "- " prefix,
+      # cap at 100 lines (FLN5).
+      local llines
+      llines="$(grep -E '^\- ' "$learnings_file" 2>/dev/null | sed 's/^- //' | head -n 100 || true)"
+      if [ -n "$llines" ]; then
+        local ll
+        while IFS= read -r ll; do
+          [ -n "$ll" ] || continue
+          # FLN5: cap at 500 chars; FLN8: sanitize | and backticks
+          local sanitized
+          sanitized="$(printf '%s' "$ll" | head -c 500 | sed 's/|/ /g; s/`/'"'"'/g' || true)"
+          [ -n "$sanitized" ] || continue
+          all_lessons="${all_lessons}${sanitized}	${rp_name}
+"
+        done <<EOF_LL
+$llines
+EOF_LL
+      fi
+    fi
+
+    # Read META.proposed.md — FLN2: only used as arg to read commands
+    if [ -f "$meta_file" ]; then
+      found_any_file=1
+      # Extract proposal bullet lines (lines starting with "- "), strip leading "- " prefix.
+      local mlines
+      mlines="$(grep -E '^\- ' "$meta_file" 2>/dev/null | sed 's/^- //' | head -n 100 || true)"
+      if [ -n "$mlines" ]; then
+        local ml
+        while IFS= read -r ml; do
+          [ -n "$ml" ] || continue
+          # FLN5: cap at 500 chars; FLN8: sanitize
+          local m_sanitized
+          m_sanitized="$(printf '%s' "$ml" | head -c 500 | sed 's/|/ /g; s/`/'"'"'/g' || true)"
+          [ -n "$m_sanitized" ] || continue
+          all_lessons="${all_lessons}${m_sanitized}	${rp_name}
+"
+        done <<EOF_ML
+$mlines
+EOF_ML
+      fi
+    fi
+
+    if [ "$found_any_file" = "0" ]; then
+      # FLN6: no proposals → [skip] line; continue (per-repo degrade, exit 0 overall)
+      skip_report="${skip_report}  [skip] ${rp_name}: no LEARNINGS.proposed.md or META.proposed.md found
+"
+    fi
+  done <<EOF_RP
+$repo_list
+EOF_RP
+
+  # -------------------------------------------------------------------------
+  # Cluster by recurrence: count how many distinct repos each lesson appears in
+  # (FLN8: threshold is FLEET_REPEAT_THRESHOLD named constant)
+  # -------------------------------------------------------------------------
+  # Build a deduplicated list of unique (lesson_text, repo) pairs first,
+  # then count repos-per-lesson-text.
+  # All processing via awk || true (FLN6).
+
+  # lesson_summary: "<tag>\t<count>\t<sources>\t<text>"
+  local lesson_summary
+  lesson_summary="$(printf '%s\n' "$all_lessons" | awk -F'\t' -v thr="$FLEET_REPEAT_THRESHOLD" '
+    NF < 2 { next }
+    {
+      txt = $1; src = $2
+      # deduplicate (txt, src) pairs
+      key = txt SUBSEP src
+      if (seen[key]++) next
+      # count repos per lesson text
+      repo_count[txt]++
+      # accumulate sources (comma-sep, deduplication handled via seen above)
+      if (sources[txt] == "") { sources[txt] = src }
+      else { sources[txt] = sources[txt] ", " src }
+    }
+    END {
+      for (txt in repo_count) {
+        cnt = repo_count[txt]
+        tag = (cnt >= thr) ? "[generalizable-candidate]" : "[project: " sources[txt] "]"
+        printf "%s\t%d\t%s\t%s\n", tag, cnt, sources[txt], txt
+      }
+    }
+  ' 2>/dev/null | sort -t$'\t' -k2 -rn 2>/dev/null || true)"
+
+  # -------------------------------------------------------------------------
+  # Print candidate summary to stdout (always, regardless of --write-proposals)
+  # -------------------------------------------------------------------------
+  say "massoh fleet learn — $ts  (v$ver)"
+  say "  Cross-repo lesson candidates (threshold=${FLEET_REPEAT_THRESHOLD} repos for [generalizable-candidate]):"
+  if [ -z "$(printf '%s' "$lesson_summary" | tr -d '[:space:]')" ]; then
+    say "  (no lessons found across fleet)"
+  else
+    local ls_line
+    while IFS= read -r ls_line; do
+      [ -n "$ls_line" ] || continue
+      local ls_tag ls_cnt ls_src ls_txt
+      ls_tag="$(printf '%s' "$ls_line" | cut -f1)"
+      ls_cnt="$(printf '%s' "$ls_line" | cut -f2)"
+      ls_src="$(printf '%s' "$ls_line" | cut -f3)"
+      ls_txt="$(printf '%s' "$ls_line" | cut -f4)"
+      say "  ${ls_tag} (repos=${ls_cnt}, sources=${ls_src}): ${ls_txt}"
+    done <<EOF_SUM
+$lesson_summary
+EOF_SUM
+  fi
+  if [ -n "$skip_report" ]; then
+    say "$skip_report"
+  fi
+
+  # -------------------------------------------------------------------------
+  # FLN7: --write-proposals → Pattern A (sentinel-regenerate, idempotent)
+  # The file is always regenerated fresh; two runs produce identical content.
+  # -------------------------------------------------------------------------
+  if [ "$write_proposals" = "1" ]; then
+    mkdir -p "$repo/agent-project"
+    {
+      printf '<!-- massoh-fleet-generated -->\n'
+      printf '# FLEET_LEARNINGS — Candidate Pool\n'
+      printf '\n'
+      printf '> CANDIDATES ONLY — engine adoption is a separate owner/gated step.\n'
+      printf '> Generated: %s (v%s)\n' "$ts" "$ver"
+      printf '> Recurrence threshold: %d repos for [generalizable-candidate].\n' "$FLEET_REPEAT_THRESHOLD"
+      printf '> Source attribution uses repo basename only (not absolute path).\n'
+      printf '\n'
+      printf '## Lessons\n'
+      printf '\n'
+      if [ -z "$(printf '%s' "$lesson_summary" | tr -d '[:space:]')" ]; then
+        printf '(no lessons found across discovered repos)\n'
+      else
+        local ls2_line
+        while IFS= read -r ls2_line; do
+          [ -n "$ls2_line" ] || continue
+          local ls2_tag ls2_cnt ls2_src ls2_txt
+          ls2_tag="$(printf '%s' "$ls2_line" | cut -f1)"
+          ls2_cnt="$(printf '%s' "$ls2_line" | cut -f2)"
+          ls2_src="$(printf '%s' "$ls2_line" | cut -f3)"
+          ls2_txt="$(printf '%s' "$ls2_line" | cut -f4)"
+          # FLN8: printf '%s' with named vars — never eval; fields already sanitized
+          # Use printf -- to prevent format string starting with '-' being parsed as option
+          printf -- '- %s (repos=%s, sources=%s): %s\n' \
+            "$ls2_tag" "$ls2_cnt" "$ls2_src" "$ls2_txt"
+        done <<EOF_W
+$lesson_summary
+EOF_W
+      fi
+      printf '\n'
+      printf '## Skipped repos (no proposals)\n'
+      printf '\n'
+      if [ -z "$(printf '%s' "$skip_report" | tr -d '[:space:]')" ]; then
+        printf '(none)\n'
+      else
+        printf '%s\n' "$skip_report"
+      fi
+    } > "$FLEET_LEARNINGS"  # SAFETY: only permitted write in cmd_fleet_learn (FLN3)
+    say "  -> wrote $FLEET_LEARNINGS"
+  fi
+}
+
 cmd_fleet() {
   # FL8: local-only, no upload
   local fleet_root="" use_cache=0 tsv_file=""
@@ -914,6 +1161,7 @@ cmd_fleet() {
   # Dispatch subcommands first (before option parsing).
   case "${1:-}" in
     serve) shift; _fleet_serve "$@"; return $?;;
+    learn) shift; cmd_fleet_learn "$@"; return $?;;
   esac
 
   while [ $# -gt 0 ]; do case "$1" in
@@ -923,9 +1171,11 @@ cmd_fleet() {
     --help|-h)
       printf 'massoh fleet [--root <dir>] [--no-cache]\n'
       printf 'massoh fleet serve [--port N]\n'
+      printf 'massoh fleet learn [--write-proposals] [--root <dir>]\n'
       printf '\n'
       printf 'Discover opted-in Massoh repos and print a per-repo rollup.\n'
       printf 'Use "massoh fleet serve" to start the observability dashboard.\n'
+      printf 'Use "massoh fleet learn" to aggregate cross-repo lesson candidates.\n'
       printf '\n'
       printf 'Discovery modes (tried in order):\n'
       printf '  1. --root <dir>   scan <dir> (find -maxdepth 3) for .massoh markers\n'
