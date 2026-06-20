@@ -4,24 +4,22 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-19 (**24h QUEUE COMPLETE** — 12 features shipped v0.9→**v0.19**, 1 deferred (#5 auto-ledger, honest). PRs #16–#28. Suite 204→463 green. bin/massoh 1662→216 (13 lib/verbs). All gated; reviewer caught real issues incl. my append-only slip. Follow-ups queued: T6 CI-flaky, verb load-order NB-1, bats inline-copy drift, full bats port.)
+Last updated: 2026-06-20 (Fleet observability platform, 8h away-autonomy — **slice 0 + 1a-0 + 1a SHIPPED** (`massoh fleet serve` dashboard live: index + repo KPI views + A↔B nav; loopback/read-only; PR #31/#32, **v0.20.0**, suite 504 green). Building 1b drill-down → 1c (form-only) → 3 (CLI). 1c POST + slice-3 button + engine adoption PARKED for owner. [24h queue earlier: 12 features v0.9→v0.19 + 2 follow-up fixes, #5 deferred.])
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**Massoh Fleet — observability + self-learning platform** (NEW; owner-approved design, brainstormed).
-Spec: `agent-project/briefs/fleet-observability-spec.md`. Building under an **8h owner-away autonomy
-grant**: proceed on recommended defaults, consult massoh-system-architect, steer by the vision,
-auto-merge-on-green. Build order: slice 0 ledger-capture → 1a index+repo KPI views+nav → 1b task
-drill-down → 1c start-task → 3 fleet learn. PARK for owner: irreversible ops, paid spend, engine
-adoption of self-learning proposals, engine-extraction (#2). Consulting system-architect before slice 0.
+**Massoh Fleet — observability platform** (8h owner-away autonomy grant). Spec:
+`agent-project/briefs/fleet-observability-spec.md`. **Shipped:** slice 0 ledger-capture ✓ · 1a-0 serve
+skeleton ✓ (PR #31) · 1a dashboard content ✓ (PR #32, v0.20.0 — `massoh fleet serve` = index + repo
+KPI views + A↔B nav, loopback-only, read-only, GET-only). **Building:** 1b task drill-down → then 1c
+start-task **(form read-only; POST PARKED for owner)** → 3 `fleet learn` CLI **(browser button PARKED)**.
+PARKED FOR OWNER: 1c HTTP-write, slice-3 button, engine adoption of self-learning proposals,
+engine-extraction (#2). All read-only slices proceed on green.
 
-**Last shipped:** TASK-2026-06-19-bats — scoped bats infra + T1 pilot. **Merged PR #28, VERSION 0.19.0**,
-
-**Last shipped:** TASK-2026-06-19-bats — scoped bats infra + T1 pilot. **Merged PR #28, VERSION 0.19.0**,
-bats 6/6 + run.sh 463 green. Completed the 24h queue (12 features v0.9→v0.19; #5 deferred).
+**Last shipped:** Fleet slice 1a — dashboard content. **Merged PR #32, VERSION 0.20.0**, suite 504 green.
 
 ## Open questions (owner decision needed)
 | Question | Raised | Context |
@@ -109,6 +107,8 @@ bats 6/6 + run.sh 463 green. Completed the 24h queue (12 features v0.9→v0.19; 
 
 | 2026-06-20 | Fleet platform: system-architect **GREEN-LIT** (`.agent_tasks/TASK-2026-06-20-fleet-observability/00_architecture_review.md`). Endorsed sequence (split 1a→1a-0 serve-skeleton first); architecture: thin loopback Python-stdlib server, **HTML escaped in bash** (reuse _board_html_escape), server = route-allowlist transport (NOT a file server), scripts/ wiring exists → no manifest edit. **PROCEED** read-only slices 0/1a/1b under N1–N7. **PARKED FOR OWNER:** 1c POST→intake (first HTTP-write = new safety-critical risk class) + slice-3 browser button + engine adoption — build forms read-only only. Defaults confirmed (stdlib-only no-pip; loopback host fixed; port 8787). | system-architect |
 | 2026-06-20 | Fleet **slice 0 (ledger-capture) DONE** — backfilled 10 REAL per-stage costs (from this session's subagent_tokens/duration; no fabrication) into ledger.tsv (14 rows); `massoh ledger` reports per-task + per-stage KPIs. Convention: orchestrator calls `massoh ledger add <task-id> <stage> <tokens> <seconds>` after each subagent. | owner(auto) |
+| 2026-06-20 | Fleet **slice 1a-0 (serve skeleton): APPROVE** — N1–N7 all independently verified (file:line refs in 06_slice-1a0_review.md); loopback-only reproduced live (127.0.0.1:34217, traversal→404, no-orphan PID confirmed); 476/476 green (self-witnessed, exit 0); scope: 3 files only (scripts/massoh-dashboard new, lib/verbs/fleet.sh additive, test/run.sh additive); bin/massoh/manifest.yml/safety-critical files diff=0; NB-1 T-FS-6 stdlib check partial (non-blocking); NB-2 allow_reuse_address class-level redundant (non-blocking). Ready to merge. | reviewer-qa |
+| 2026-06-20 | Fleet **slice 1a (dashboard content): APPROVE** — N1–N7/FL1 all independently verified (file:line refs in 06_slice-1a_review.md); traversal→404 reproduced (regex rejects % at char-class level; `repo_name` never os.path.join'd); XSS escape reproduced (no raw `<script>alert` in output; `&lt;script&gt;` confirmed); read-only reproduced (byte-snapshot alpha+beta repos identical before/after 3 renders); POST→404 reproduced; no orphan process; 504/504 green (self-witnessed, exit 0); scope: 6 files (lib/verbs/fleet.sh additive, scripts/massoh-dashboard extended, test/run.sh +28 T-FS-7..14, VERSION, CHANGELOG, AGENT_SYNC); bin/massoh/manifest.yml/safety-critical files diff=0; NB-1 unused shutil import; NB-2 inline urllib.parse import; NB-3 header title not self-escaping (all non-blocking). Ready to merge. | reviewer-qa |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -138,40 +138,48 @@ None.
 | TASK-2026-06-19-bats (#12) | merged | DONE — PR #28 → main, VERSION 0.19.0 |
 | TASK-2026-06-19-fix-t6 (#13) | 06_review_result | REQUEST CHANGES — BLOCK-1: rm stderr noise undisclosed; BLOCK-2: memory/MEMORY.md scope disclosure. Fast-track on 2 fixes. |
 | TASK-2026-06-19-fix-drift (#15) | 06_review_result | APPROVE — DG1–DG4 verified; 465/465 green; drift-detection reproduced; scope clean. Ready to merge. |
+| TASK-2026-06-20-fleet-observability slice 1a-0 | 06_review_result | APPROVE — N1–N7 verified; 476/476 green; loopback+traversal+no-orphan reproduced live; scope clean. Ready to merge. |
+| TASK-2026-06-20-fleet-observability slice 1a | 06_review_result | APPROVE — N1–N7/FL1 verified; 504/504 green; traversal+escape+read-only independently reproduced; scope clean. Ready to merge. |
 
 ## Last handoff
 ```
 Agent: massoh-reviewer-qa
 Mode: REVIEW_QA
-Task: TASK-2026-06-19-fix-drift (#15) — inline-copy drift guard (P1 test-only)
-Status: APPROVE. 06_review_result.md written.
-Branch: feat/fix-drift (uncommitted)
+Task: TASK-2026-06-20-fleet-observability — slice 1a content (dashboard)
+Status: APPROVE. 06_slice-1a_review.md written.
+Branch: feat/fleet-dashboard (uncommitted)
 
-Decision: APPROVE. All DG1–DG4 conditions independently verified. No blocking issues.
+Decision: APPROVE. All N1–N7/FL1 conditions independently verified. 504/504 green.
 
-  DG1 (bin/massoh extraction): awk anchors on /^manifest_schema_ver\(\)/ + /^\}$/ at
-    col 0. Confirmed unique in bin/massoh. _dg_bin non-empty (8 content lines).
-  DG2 (SR_HELPER extraction): sed range /^cat > "\$SR_HELPER"/,/^SR_HELPER_EOF$/ both
-    anchors confirmed unique in test/run.sh (lines 3031, 3045). No self-reference from
-    T-DG comment lines (start with '#'). Inner awk identical to DG1. _dg_sr non-empty.
-  DG3 (normalized diff): diff exits 0 on current codebase. Whitespace normalization on
-    both sides prevents false-red on indentation differences.
-  DG4 / T-DG-2 (non-vacuous): _dg_bin 8 lines non-empty; _dg_diverged = _dg_bin +
-    DIVERGE_MARKER; diff exits non-zero (independently reproduced).
+  N1 (loopback): BIND_HOST = "127.0.0.1" at dashboard:40; --port only knob.
+  N2 (route allowlist + set-membership): _REPO_NAME_RE rejects %, ., / at
+    char-class level (BEFORE unquote); repo_name never os.path.join'd; traversal
+    -> 404 independently reproduced (/repo/..%2f..%2fetc, /repo/../../../etc,
+    /repo/alpha-repo/../../etc — all 404).
+  N3 (lifecycle): SIGTERM -> clean shutdown; pgrep clean post-suite.
+  N4 (escape every field): all 10 KPI fields + task titles + commit messages +
+    sibling nav + stage labels + timestamps enumerated. XSS reproduced: no raw
+    <script>alert; &lt;script&gt; confirmed present in repo view.
+  N5 (reuse): KPIs from METRICS.md / ledger.tsv / AGENT_SYNC.md / AGENT_BACKLOG.md;
+    no recomputation in Python.
+  N6 (GET-only): POST -> 404 reproduced on / and /repo/alpha-repo.
+  N7 (stdlib): all imports stdlib; python3 guard in fleet.sh.
+  FL1 (read-only): byte-snapshot alpha+beta repos identical before/after 3 renders.
 
-  DRIFT DETECTION REPRODUCED LIVE:
-    Temp edit: bin/massoh line 25 '^schema_version:' -> '^schema_XXX:'
-    Suite result: T-DG-1 FAIL, T-DG-2 ok, 1/465 FAILED
-    Reverted: git diff bin/massoh = clean (empty diff)
-    Clean suite: ALL GREEN — 465 checks passed.
+  Scope: 6 files (fleet.sh additive, massoh-dashboard extended, test/run.sh +28,
+    VERSION, CHANGELOG, AGENT_SYNC). bin/massoh diff=0. manifest.yml diff=0.
+    AGENT_BACKLOG.md untouched. Safety-critical files clean. 1c/3 correctly parked.
 
-  Scope: git diff --name-only main (excl. .agent_tasks) = test/run.sh only.
-    bin/massoh/manifest.yml/lib/verbs/VERSION/CHANGELOG — all untouched.
-  Tests: 465/465 green (self-witnessed after revert).
+  Tests: 504/504 green (exit 0). T-FS-7..T-FS-14 all substantive (live server,
+    real fake repos, real XSS title, real byte-snapshot).
 
-Next recommended agent: orchestrator / auto-merge on green (per policy)
-Next action: Commit feat/fix-drift (test/run.sh + task artifacts only), squash-merge PR.
-             Note: #13 (fix-t6) still REQUEST CHANGES — handle separately.
+  NB-1 unused shutil import (non-blocking).
+  NB-2 inline urllib.parse import (non-blocking).
+  NB-3 header title not self-escaping (future hardening, non-blocking; callers correct).
+
+Next recommended agent: orchestrator / auto-merge on green (per policy).
+Next action: Commit feat/fleet-dashboard, squash-merge PR -> main (VERSION 0.20.0).
+             Then proceed to slice 1b (task drill-down) under N1-N7.
 ```
 
 ## [meta-engineer] 2026-06-19 — RMT proposal (TASK-2026-06-19-rmt)
