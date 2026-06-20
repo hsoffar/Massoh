@@ -4,22 +4,27 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-20 (Fleet observability platform, 8h away-autonomy — **slice 0 + 1a-0 + 1a SHIPPED** (`massoh fleet serve` dashboard live: index + repo KPI views + A↔B nav; loopback/read-only; PR #31/#32, **v0.20.0**, suite 504 green). Building 1b drill-down → 1c (form-only) → 3 (CLI). 1c POST + slice-3 button + engine adoption PARKED for owner. [24h queue earlier: 12 features v0.9→v0.19 + 2 follow-up fixes, #5 deferred.])
+Last updated: 2026-06-20 (**FLEET OBSERVABILITY PLATFORM COMPLETE** — 8h away-autonomy. All slices shipped: 0 ledger · 1a-0 serve · 1a index+KPI+nav · 1b task drill-down · 1c start-task panel · 3 `fleet learn` candidates. PRs #31–#35, **v0.23.0**, suite 574 green. `massoh fleet serve` = loopback/read-only observability dashboard. **PARKED FOR OWNER:** live POST start-task submit, browser learn-button, engine adoption of FLEET_LEARNINGS candidates, engine-extraction #2. [Earlier: 24h queue 12 features v0.9→v0.19 + follow-ups.])
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**Massoh Fleet — observability platform** (8h owner-away autonomy grant). Spec:
-`agent-project/briefs/fleet-observability-spec.md`. **Shipped:** slice 0 ledger-capture ✓ · 1a-0 serve
-skeleton ✓ (PR #31) · 1a dashboard content ✓ (PR #32, v0.20.0 — `massoh fleet serve` = index + repo
-KPI views + A↔B nav, loopback-only, read-only, GET-only). **Building:** 1b task drill-down → then 1c
-start-task **(form read-only; POST PARKED for owner)** → 3 `fleet learn` CLI **(browser button PARKED)**.
-PARKED FOR OWNER: 1c HTTP-write, slice-3 button, engine adoption of self-learning proposals,
-engine-extraction (#2). All read-only slices proceed on green.
+**None active — Fleet observability platform COMPLETE** (spec `agent-project/briefs/fleet-observability-spec.md`).
+`massoh fleet serve` ships a loopback-only, read-only observability dashboard: fleet index + per-repo
+KPI views (cost/cycle/rework/throughput from ledger+METRICS) + A↔B nav + task drill-down + a read-only
+start-task panel. `massoh fleet learn` produces de-identified cross-repo lesson **candidates** (never
+auto-promotes). PRs #31–#35, v0.23.0, suite 574 green; loopback/read-only/zero-spend throughout.
 
-**Last shipped:** Fleet slice 1a — dashboard content. **Merged PR #32, VERSION 0.20.0**, suite 504 green.
+**PARKED FOR OWNER (need your decision/sign-off):**
+1. Live **POST start-task** submit from the browser (first HTTP→write; arch flagged as new risk class).
+2. Browser **"update master learning"** button (POST → fleet learn).
+3. **Engine adoption** of any `FLEET_LEARNINGS.proposed.md` candidate (gated; never auto).
+4. **Engine-extraction (#2)** — split the engine into its own repo (deferred by owner).
+5. Owner-optional: **deploy** v0.23.0 to `~/.claude` via `massoh update`; commit/gitignore `deck/`.
+
+**Last shipped:** Fleet slice 3 — `massoh fleet learn`. **Merged PR #35, VERSION 0.23.0**, suite 574 green.
 
 ## Open questions (owner decision needed)
 | Question | Raised | Context |
@@ -109,6 +114,7 @@ engine-extraction (#2). All read-only slices proceed on green.
 | 2026-06-20 | Fleet **slice 0 (ledger-capture) DONE** — backfilled 10 REAL per-stage costs (from this session's subagent_tokens/duration; no fabrication) into ledger.tsv (14 rows); `massoh ledger` reports per-task + per-stage KPIs. Convention: orchestrator calls `massoh ledger add <task-id> <stage> <tokens> <seconds>` after each subagent. | owner(auto) |
 | 2026-06-20 | Fleet **slice 1a-0 (serve skeleton): APPROVE** — N1–N7 all independently verified (file:line refs in 06_slice-1a0_review.md); loopback-only reproduced live (127.0.0.1:34217, traversal→404, no-orphan PID confirmed); 476/476 green (self-witnessed, exit 0); scope: 3 files only (scripts/massoh-dashboard new, lib/verbs/fleet.sh additive, test/run.sh additive); bin/massoh/manifest.yml/safety-critical files diff=0; NB-1 T-FS-6 stdlib check partial (non-blocking); NB-2 allow_reuse_address class-level redundant (non-blocking). Ready to merge. | reviewer-qa |
 | 2026-06-20 | Fleet **slice 1a (dashboard content): APPROVE** — N1–N7/FL1 all independently verified (file:line refs in 06_slice-1a_review.md); traversal→404 reproduced (regex rejects % at char-class level; `repo_name` never os.path.join'd); XSS escape reproduced (no raw `<script>alert` in output; `&lt;script&gt;` confirmed); read-only reproduced (byte-snapshot alpha+beta repos identical before/after 3 renders); POST→404 reproduced; no orphan process; 504/504 green (self-witnessed, exit 0); scope: 6 files (lib/verbs/fleet.sh additive, scripts/massoh-dashboard extended, test/run.sh +28 T-FS-7..14, VERSION, CHANGELOG, AGENT_SYNC); bin/massoh/manifest.yml/safety-critical files diff=0; NB-1 unused shutil import; NB-2 inline urllib.parse import; NB-3 header title not self-escaping (all non-blocking). Ready to merge. | reviewer-qa |
+| 2026-06-20 | Fleet **slice 1b (task drill-down): APPROVE** — N1–N7/FL1 all independently verified (file:line refs in 06_slice-1b_review.md); double-404 reproduced live (known/known→200; known/unknown-task→404; unknown-repo/x→404; ..%2f..→404; ../../etc→404); XSS escape reproduced (no raw `<script>alert`; `&lt;script&gt;` confirmed); no-full-body reproduced (15-line file: Line 10./Line 15. absent; first-line label present); read-only reproduced (byte-snapshot identical before/after 3 renders); POST→404; no orphan server; 528/528 green (self-witnessed twice); scope: 5 files (lib/verbs/fleet.sh additive `_fleet_render_task`, scripts/massoh-dashboard extended route+handler, test/run.sh +T-FS-15..24, VERSION, CHANGELOG); bin/massoh/manifest.yml/safety-critical files diff=0; NB-1 shutil unused (pre-existing, non-blocking); NB-2 T-FS-22 static-source checks (non-blocking; live checks in T-FS-15..18). Ready to merge. | reviewer-qa |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -140,46 +146,54 @@ None.
 | TASK-2026-06-19-fix-drift (#15) | 06_review_result | APPROVE — DG1–DG4 verified; 465/465 green; drift-detection reproduced; scope clean. Ready to merge. |
 | TASK-2026-06-20-fleet-observability slice 1a-0 | 06_review_result | APPROVE — N1–N7 verified; 476/476 green; loopback+traversal+no-orphan reproduced live; scope clean. Ready to merge. |
 | TASK-2026-06-20-fleet-observability slice 1a | 06_review_result | APPROVE — N1–N7/FL1 verified; 504/504 green; traversal+escape+read-only independently reproduced; scope clean. Ready to merge. |
+| TASK-2026-06-20-fleet-observability slice 1b | 06_review_result | APPROVE — N1–N7/FL1 verified; 528/528 green; double-404+escape+no-full-body+read-only independently reproduced; scope clean. Ready to merge. |
+| TASK-2026-06-20-fleet-observability slice 1c | 06_review_result | APPROVE — all conditions verified; POST→404 reproduced live (3 routes); panel escaped (&amp;&amp; present, no raw &lt;script&gt;); read-only (byte-snapshot REPO_A+B identical); 544/544 green; scope 4 files; bin/massoh+manifest diff=0; POST PARK holds (server file unmodified). Ready to merge. |
+| TASK-2026-06-20-fleet-observability slice 3 | 06_review_result | APPROVE — FLN1–FLN8 all independently verified; 574/574 green (independently run); engine-untouched (git diff empty on agent-os/bin/massoh/manifest.yml/templates/scripts/massoh-dashboard); zero-LLM (static grep clean); candidates-only header present; read-only on discovered repos (live byte-snapshot identical); promotion boundary reproduced live ([generalizable-candidate] at >=2 repos, [project:basename] at 1 repo); NB-1 T-FLN-6a timestamp fragility (non-blocking, disclosed by implementer); NB-2 awk ordering (non-blocking); no blockers. Ready to merge. |
 
 ## Last handoff
 ```
 Agent: massoh-reviewer-qa
 Mode: REVIEW_QA
-Task: TASK-2026-06-20-fleet-observability — slice 1a content (dashboard)
-Status: APPROVE. 06_slice-1a_review.md written.
-Branch: feat/fleet-dashboard (uncommitted)
+Task: TASK-2026-06-20-fleet-observability — slice 3 (massoh fleet learn)
+Status: APPROVE. 06_slice3_review.md written.
+Branch: feat/fleet-learn (uncommitted)
 
-Decision: APPROVE. All N1–N7/FL1 conditions independently verified. 504/504 green.
+Decision: APPROVE. All FLN1–FLN8 independently verified. 574/574 green.
 
-  N1 (loopback): BIND_HOST = "127.0.0.1" at dashboard:40; --port only knob.
-  N2 (route allowlist + set-membership): _REPO_NAME_RE rejects %, ., / at
-    char-class level (BEFORE unquote); repo_name never os.path.join'd; traversal
-    -> 404 independently reproduced (/repo/..%2f..%2fetc, /repo/../../../etc,
-    /repo/alpha-repo/../../etc — all 404).
-  N3 (lifecycle): SIGTERM -> clean shutdown; pgrep clean post-suite.
-  N4 (escape every field): all 10 KPI fields + task titles + commit messages +
-    sibling nav + stage labels + timestamps enumerated. XSS reproduced: no raw
-    <script>alert; &lt;script&gt; confirmed present in repo view.
-  N5 (reuse): KPIs from METRICS.md / ledger.tsv / AGENT_SYNC.md / AGENT_BACKLOG.md;
-    no recomputation in Python.
-  N6 (GET-only): POST -> 404 reproduced on / and /repo/alpha-repo.
-  N7 (stdlib): all imports stdlib; python3 guard in fleet.sh.
-  FL1 (read-only): byte-snapshot alpha+beta repos identical before/after 3 renders.
+  FLN4 (promotion boundary — highest priority):
+    Live run: 3-repo fleet → [generalizable-candidate] at repos=2, [project:gamma] at repos=1.
+    Written file header: "CANDIDATES ONLY — engine adoption is a separate owner/gated step."
+    git diff HEAD -- agent-os/ bin/massoh manifest.yml templates/ scripts/massoh-dashboard → EMPTY.
+    T-FLN-4a–f all green. One write statement in cmd_fleet_learn (line 1151 → $FLEET_LEARNINGS).
+    No auto-promote-to-engine path exists.
 
-  Scope: 6 files (fleet.sh additive, massoh-dashboard extended, test/run.sh +28,
-    VERSION, CHANGELOG, AGENT_SYNC). bin/massoh diff=0. manifest.yml diff=0.
-    AGENT_BACKLOG.md untouched. Safety-critical files clean. 1c/3 correctly parked.
+  FLN1 (zero-LLM/spend):
+    Static grep: no claude/curl/wget/agent in cmd_fleet_learn body. T-FLN-5a/b/c/d green.
 
-  Tests: 504/504 green (exit 0). T-FS-7..T-FS-14 all substantive (live server,
-    real fake repos, real XSS title, real byte-snapshot).
+  FLN2 (read-only on discovered repos):
+    Live byte-snapshot: repo-x md5 identical before/after, repo-y md5 identical before/after.
+    T-FLN-2a/b green.
 
-  NB-1 unused shutil import (non-blocking).
-  NB-2 inline urllib.parse import (non-blocking).
-  NB-3 header title not self-escaping (future hardening, non-blocking; callers correct).
+  FLN3 (single named write var + SAFETY):
+    fleet.sh:923 FLEET_LEARNINGS declaration + SAFETY comment.
+    fleet.sh:1151 sole write operator. Confirmed exhaustive grep.
+
+  FLN5 (leak guard): basename only (no abs-path), head -c 500 caps, no raw dump. PASS.
+  FLN6 (|| true + degrade): set -euo pipefail line 918; per-repo [skip] degrade reproduced live.
+  FLN7 (idempotent): Pattern A sentinel-regenerate. No duplicate entries. See NB-1.
+  FLN8 (sanitize + named constant): | → space, backtick → ', FLEET_REPEAT_THRESHOLD=2.
+
+  Scope: 5 files (lib/verbs/fleet.sh +cmd_fleet_learn, test/run.sh +T-FLN-1..8 (30 assertions),
+    VERSION 0.23.0, CHANGELOG [0.23.0], AGENT_SYNC.md rolling update).
+    scripts/massoh-dashboard diff=0. bin/massoh diff=0. manifest.yml diff=0.
+
+  NB-1: T-FLN-6a timestamp-dependent (two runs must land within same second for identical md5).
+         Disclosed by implementer. Product correct (no duplication). Non-blocking.
+  NB-2: awk ordering non-deterministic for same-count lessons. Non-blocking (human review).
 
 Next recommended agent: orchestrator / auto-merge on green (per policy).
-Next action: Commit feat/fleet-dashboard, squash-merge PR -> main (VERSION 0.20.0).
-             Then proceed to slice 1b (task drill-down) under N1-N7.
+Next action: Commit feat/fleet-learn, squash-merge PR -> main (VERSION 0.23.0).
+             PARK for owner: browser learn-button (POST) + engine ADOPTION of any candidate.
 ```
 
 ## [meta-engineer] 2026-06-19 — RMT proposal (TASK-2026-06-19-rmt)

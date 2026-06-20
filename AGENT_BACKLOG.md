@@ -96,3 +96,4 @@ slices 2+), Fleet layer (slices 3–4: cross-repo lessons pool → engine self-c
 | 15 | P1 | bats inline-copy drift — test/run.sh SR_HELPER duplicates manifest_schema_ver(); extract a sourceable helper or add cross-ref guard | **DONE** — PR #30 (drift guard) |
 | 16 | P3 | Full bats port — migrate remaining test/run.sh sections to bats once test suite is split per-verb (deferred from #12) | TODO |
 | 17 | P0 | test/run.sh not parallel-safe — concurrent runs collide on shared $TMP/HOME/doctor-network state (2 spurious fails observed); isolate per-run tmp or document single-run-only | TODO |
+| 18 | P3 | T-FLN-6a idempotency test fragile — compares raw md5 of FLEET_LEARNINGS but file embeds a Generated: timestamp; compare with the Generated line stripped | TODO |
