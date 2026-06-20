@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """
-massoh-dashboard — Massoh Fleet observability dashboard (slice 1a content).
+massoh-dashboard — Massoh Fleet observability dashboard (slice 1a+1b content).
 
 Security model:
   N1  Bind hard-coded to 127.0.0.1 ONLY. Host is NOT configurable.
   N2  Route allowlist (NOT a static file server). Routes:
-        GET /           → fleet index (bash-rendered HTML)
-        GET /repo/<name> → per-repo view (bash-rendered HTML)
-      <name> is validated against the discovered-repo set (set-membership only;
-      <name> is NEVER joined onto a filesystem path).  Unknown name → 404.
+        GET /                            → fleet index (bash-rendered HTML)
+        GET /repo/<name>                 → per-repo view (bash-rendered HTML)
+        GET /repo/<name>/task/<task-id>  → task drill-down (bash-rendered HTML)
+      <name> validated against the discovered-repo set (set-membership only;
+      NEVER joined onto a filesystem path).  Unknown name → 404.
+      <task-id> validated against THAT repo's discovered task set
+      (.agent_tasks/TASK-*/ basenames — set-membership only; NEVER joined onto a
+      filesystem path).  Unknown or traversal-encoded task-id → 404.
       Everything else → 404.
   N3  Clean lifecycle: foreground, blocking, SIGINT/SIGTERM → clean shutdown.
       Never auto-daemonized.
@@ -124,6 +128,39 @@ def _build_repo_name_map(repos: list) -> dict:
     return m
 
 
+def _discover_tasks_for_repo(repo_path: str) -> set:
+    """
+    Discover the set of task basenames for a given repo.
+
+    Scans <repo_path>/.agent_tasks/TASK-*/ for subdirectories.
+    Returns a set of basename strings (e.g. {"TASK-foo", "TASK-bar"}).
+
+    N2 (slice 1b): <task-id> in the URL is looked up IN THIS SET only.
+    The task-id is NEVER os.path.join()-ed onto any filesystem root.
+    We use the repo_path that came from the server-side repo map (trusted).
+    Cap at 200 entries (mirrors fleet.sh FL4 cap).
+    """
+    tasks = set()
+    tasks_dir = os.path.join(repo_path, ".agent_tasks")
+    if not os.path.isdir(tasks_dir):
+        return tasks
+    try:
+        entries = os.listdir(tasks_dir)
+    except OSError:
+        return tasks
+    count = 0
+    for entry in sorted(entries):
+        if not entry.startswith("TASK-"):
+            continue
+        entry_path = os.path.join(tasks_dir, entry)
+        if os.path.isdir(entry_path):
+            tasks.add(entry)
+            count += 1
+            if count >= 200:
+                break
+    return tasks
+
+
 # ---------------------------------------------------------------------------
 # Bash renderer invocation (Seam A — bash produces + escapes HTML)
 # ---------------------------------------------------------------------------
@@ -210,6 +247,12 @@ def _sh_quote(s: str) -> str:
 # anything outside this set → 404 before the set-membership check.
 _REPO_NAME_RE = re.compile(r"^/repo/([A-Za-z0-9_.~\-]+)$")
 
+# N2 (slice 1b): valid /repo/<name>/task/<task-id> pattern.
+# Both <name> and <task-id> are URL-decoded and then validated against
+# the server-side sets (set-membership only — NEVER joined onto filesystem paths).
+# The regex allows the same safe character class as _REPO_NAME_RE for both segments.
+_TASK_VIEW_RE = re.compile(r"^/repo/([A-Za-z0-9_.~\-]+)/task/([A-Za-z0-9_.~\-]+)$")
+
 
 class _FleetHandler(http.server.BaseHTTPRequestHandler):
     """
@@ -249,6 +292,38 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
         # Route: GET /
         if raw_path == "/":
             body = self._render_index()
+            self._send_html(body)
+            return
+
+        # Route: GET /repo/<name>/task/<task-id>  (slice 1b — check BEFORE /repo/<name>)
+        # N2: DOUBLE set-membership check:
+        #   1. <name> must be in self.repo_name_map (discovered-repo set)
+        #   2. <task-id> must be in that repo's discovered task set
+        # NEITHER value is ever os.path.join()-ed onto any filesystem root.
+        mt = _TASK_VIEW_RE.match(raw_path)
+        if mt:
+            import urllib.parse
+            repo_name = urllib.parse.unquote(mt.group(1))
+            task_id   = urllib.parse.unquote(mt.group(2))
+
+            # Check 1: repo name in server-side repo set
+            if repo_name not in self.repo_name_map:
+                self._send_404()
+                return
+
+            repo_path = self.repo_name_map[repo_name]
+
+            # Check 2: task-id in that repo's task set (discovered from filesystem;
+            # task_id is ONLY used for set-lookup — never as a path component)
+            task_set = _discover_tasks_for_repo(repo_path)
+            if task_id not in task_set:
+                self._send_404()
+                return
+
+            # task_dir is constructed from the TRUSTED repo_path + VALIDATED task_id
+            # (task_id has passed the set-membership check and the regex character filter)
+            task_dir = os.path.join(repo_path, ".agent_tasks", task_id)
+            body = self._render_task(repo_name, repo_path, task_id, task_dir)
             self._send_html(body)
             return
 
@@ -322,6 +397,25 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
         )
         return _run_bash_renderer(self.massoh_home, [func_call])
 
+    def _render_task(
+        self, repo_name: str, repo_path: str, task_id: str, task_dir: str
+    ) -> bytes:
+        """
+        Render the task drill-down page (slice 1b).
+        repo_path and task_dir come from the server-side maps (trusted); never from the URL.
+        task_id has already passed double set-membership + regex character checks.
+        Seam A: bash (_fleet_render_task) produces + escapes all HTML.
+        N4: no interpolation here; bash is responsible for all escaping.
+        """
+        func_call = (
+            f"_fleet_render_task "
+            f"{_sh_quote(repo_path)} "
+            f"{_sh_quote(repo_name)} "
+            f"{_sh_quote(task_id)} "
+            f"{_sh_quote(task_dir)}"
+        )
+        return _run_bash_renderer(self.massoh_home, [func_call])
+
 
 # ---------------------------------------------------------------------------
 # Server lifecycle
@@ -347,7 +441,7 @@ def _make_server(port: int, handler_class) -> socketserver.TCPServer:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Massoh Fleet dashboard — 127.0.0.1 only, GET / + /repo/<name>, stdlib-only."
+        description="Massoh Fleet dashboard — 127.0.0.1 only, GET / + /repo/<name> + /repo/<name>/task/<id>, stdlib-only."
     )
     # N1: --port is the ONLY knob. Host is NOT configurable.
     parser.add_argument(

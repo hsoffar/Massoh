@@ -11,6 +11,32 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.21.0] - 2026-06-20
+
+### Added
+- **`massoh fleet serve` — task drill-down view (slice 1b):** third GET page at
+  `/repo/<name>/task/<task-id>` rendered in bash (Seam A: HTML escaping in bash via
+  `_board_html_escape`; server is transport only — Seam B). Read-only (FL1).
+  - Renders the packet stage trail as an index: for each stage file present
+    (`00_request` → `06_review_result` + any extra `0N_*`/handoff/proposal files),
+    shows stage label + filename + the file's first line (title/who) only.
+    No full-body dump (scope + leak guard).
+  - Shows that task's ledger cost: per-row tokens/seconds from
+    `.agent_tasks/ledger.tsv` filtered by task-id + totals row.
+    Graceful degrade: "no cost recorded" if no matching rows.
+  - Breadcrumb: `/` → `/repo/<name>` → task + link back to the repo board.
+  - **Double set-membership validation (critical):** `<name>` validated against the
+    discovered-repo set (as in 1a); `<task-id>` validated against THAT repo's
+    `.agent_tasks/TASK-*/` basename set. Both are membership checks — NEVER joined
+    onto a filesystem path. Unknown name OR task-id OR traversal/encoded → 404.
+  - Route regex filters to `[A-Za-z0-9_.~-]+` for both name and task-id segments
+    before the set-membership check; encoded traversal (`..%2f`) cannot pass the
+    regex and returns 404.
+  - `_fleet_render_task` bash renderer in `lib/verbs/fleet.sh`. All interpolated
+    values escaped via `_board_html_escape` (N4). Stage first-lines are repo
+    content → treated as data, always escaped.
+  - Tests T-FS-15 through T-FS-24 (additive; suite ~504 → ~514 green).
+
 ## [0.20.0] - 2026-06-20
 
 ### Added
