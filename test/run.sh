@@ -3444,6 +3444,156 @@ FS_CONTENT_PID=""
 
 fi  # end: python3 available guard (content tests)
 
+# ===========================================================================
+# == T-FS-15..24: fleet dashboard task drill-down (slice 1b) ================
+# ===========================================================================
+# Requires python3. Spins a fresh server with the same fake fleet root as
+# T-FS-7..14 but also adds a known task with a ledger + an XSS first-line
+# in its 00_request.md, and a large multi-line packet file (no-full-body test).
+# T-FS-23 (loopback) and T-FS-24 (no-orphan) ensure lifecycle still holds.
+# ===========================================================================
+
+if ! command -v python3 >/dev/null 2>&1; then
+  ok "T-FS-15..24 python3 absent — task drill-down tests skipped"
+else
+
+# Reuse FS_FLEET_ROOT / FS_REPO_A from T-FS-7..12.
+# Add: a new known task "TASK-drill-1" with stages, ledger cost, and an XSS first-line.
+FS_DRILL_TASK="TASK-drill-1"
+mkdir -p "$FS_REPO_A/.agent_tasks/$FS_DRILL_TASK"
+
+# 00_request.md — first line contains a <script> tag (escape test T-FS-19)
+printf '# <script>alert("drill")</script> — drill-down test request\n\nThis is the request body.\nIt has many lines.\nLine 4.\nLine 5.\nLine 6.\nLine 7.\nLine 8.\nLine 9.\nLine 10.\nLine 11.\nLine 12.\nLine 13.\nLine 14.\nLine 15.\n' \
+  > "$FS_REPO_A/.agent_tasks/$FS_DRILL_TASK/00_request.md"
+
+# 04_implementation_packet.md — present (stage: licensed)
+printf '# 04 — Implementation packet for drill-down task\n\nScope: test the drill-down view.\n' \
+  > "$FS_REPO_A/.agent_tasks/$FS_DRILL_TASK/04_implementation_packet.md"
+
+# Add a ledger row for TASK-drill-1 (cost test T-FS-15)
+printf '%s\t%s\t%s\t%s\t%s\n' \
+  "2026-06-20T01:00:00Z" "$FS_DRILL_TASK" "scope" "1234" "90" \
+  >> "$FS_REPO_A/.agent_tasks/ledger.tsv"
+printf '%s\t%s\t%s\t%s\t%s\n' \
+  "2026-06-20T02:00:00Z" "$FS_DRILL_TASK" "implement" "5678" "300" \
+  >> "$FS_REPO_A/.agent_tasks/ledger.tsv"
+
+( cd "$FS_REPO_A" && git add -A && git commit -qm "feat: add drill-down task for T-FS-15..24" )
+
+# Pick a free port for the task drill-down tests
+FS_DRILL_PORT="$(_fs_free_port)"
+FS_DRILL_PID=""
+
+# Start the server
+MASSOH_FLEET_ROOT="$FS_FLEET_ROOT" \
+  MASSOH_HOME="$REPO_ROOT" \
+  python3 "$DASHBOARD" --port "$FS_DRILL_PORT" >/dev/null 2>&1 &
+FS_DRILL_PID=$!
+
+# Wait up to 5 seconds for the server to be ready
+_fs_dwait=0
+until curl -s --connect-timeout 0.3 "http://127.0.0.1:${FS_DRILL_PORT}/" >/dev/null 2>&1 \
+    || [ $_fs_dwait -ge 50 ]; do
+  sleep 0.1; _fs_dwait=$((_fs_dwait+1))
+done
+
+# --- T-FS-15: known/known → 200 with stage list + cost ---
+_fs15_url="http://127.0.0.1:${FS_DRILL_PORT}/repo/alpha-repo/task/${FS_DRILL_TASK}"
+_fs15_code="$(curl -s -o /dev/null -w '%{http_code}' "$_fs15_url" 2>/dev/null || echo 0)"
+_fs15_body="$(curl -s "$_fs15_url" 2>/dev/null || true)"
+check "T-FS-15a /repo/<known>/task/<known> returns HTTP 200" \
+  "[ '$_fs15_code' = '200' ]"
+check "T-FS-15b drill-down shows stage 00_request_md" \
+  "printf '%s' \"\$_fs15_body\" | grep -q '00_request'"
+check "T-FS-15c drill-down shows stage 04_implementation_packet" \
+  "printf '%s' \"\$_fs15_body\" | grep -q '04_implementation_packet'"
+check "T-FS-15d drill-down shows ledger cost rows (scope stage present)" \
+  "printf '%s' \"\$_fs15_body\" | grep -q 'scope'"
+check "T-FS-15e drill-down shows TOTAL cost row" \
+  "printf '%s' \"\$_fs15_body\" | grep -qi 'TOTAL'"
+check "T-FS-15f drill-down contains token value 1234" \
+  "printf '%s' \"\$_fs15_body\" | grep -q '1234'"
+check "T-FS-15g drill-down has breadcrumb link to /" \
+  "printf '%s' \"\$_fs15_body\" | grep -q 'href=\"/\"'"
+check "T-FS-15h drill-down has breadcrumb link to /repo/alpha-repo" \
+  "printf '%s' \"\$_fs15_body\" | grep -q 'href=\"/repo/alpha-repo\"'"
+check "T-FS-15i drill-down has massoh-generated sentinel" \
+  "printf '%s' \"\$_fs15_body\" | grep -q 'massoh-generated'"
+
+# --- T-FS-16: known/unknown task → 404 ---
+_fs16_code="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${FS_DRILL_PORT}/repo/alpha-repo/task/TASK-nonexistent-xyz" 2>/dev/null || echo 0)"
+check "T-FS-16 /repo/<known>/task/<unknown> → 404" "[ '$_fs16_code' = '404' ]"
+
+# --- T-FS-17: unknown repo/any task → 404 ---
+_fs17_code="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${FS_DRILL_PORT}/repo/no-such-repo/task/${FS_DRILL_TASK}" 2>/dev/null || echo 0)"
+check "T-FS-17 /repo/<unknown>/task/y → 404" "[ '$_fs17_code' = '404' ]"
+
+# --- T-FS-18: traversal/encoded → 404 (N2 double set-membership + regex) ---
+# Encoded slash in task-id segment: ..%2f.. cannot pass the regex [A-Za-z0-9_.~-]+
+_fs18a_code="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${FS_DRILL_PORT}/repo/alpha-repo/task/..%2f.." 2>/dev/null || echo 0)"
+check "T-FS-18a /repo/x/task/..%2f.. → 404 (encoded traversal)" "[ '$_fs18a_code' = '404' ]"
+
+# Raw dot-dot in task-id segment: after URL parsing this would be ../.. — also fails regex
+_fs18b_code="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${FS_DRILL_PORT}/repo/alpha-repo/task/../.." 2>/dev/null || echo 0)"
+check "T-FS-18b /repo/x/task/../.. → 404 (raw traversal)" "[ '$_fs18b_code' = '404' ]"
+
+# --- T-FS-19: <script> in packet first-line → escaped in drill-down (N4) ---
+# The 00_request.md first line contains <script>alert("drill")</script>
+check "T-FS-19a no raw <script> in drill-down (N4 escape)" \
+  "! printf '%s' \"\$_fs15_body\" | grep -F '<script>alert'"
+check "T-FS-19b &lt;script&gt; appears escaped in drill-down" \
+  "printf '%s' \"\$_fs15_body\" | grep -qF '&lt;script&gt;'"
+
+# --- T-FS-20: read-only byte-snapshot — repos unchanged after drill-down render ---
+_fs20_before_a="$(cd "$FS_REPO_A" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+curl -s "$_fs15_url" >/dev/null 2>&1 || true
+curl -s "http://127.0.0.1:${FS_DRILL_PORT}/" >/dev/null 2>&1 || true
+curl -s "http://127.0.0.1:${FS_DRILL_PORT}/repo/alpha-repo" >/dev/null 2>&1 || true
+sleep 0.2
+_fs20_after_a="$(cd "$FS_REPO_A" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+check "T-FS-20 alpha-repo byte-snapshot unchanged after drill-down render (read-only)" \
+  "[ '$_fs20_before_a' = '$_fs20_after_a' ]"
+
+# --- T-FS-21: no full-body dump — large file NOT dumped verbatim ---
+# The 00_request.md has 15+ lines of body. The drill-down must NOT include lines
+# "Line 10.", "Line 11." etc. (body content beyond the first line).
+# Only the first line (heading) should appear as the stage "who/what".
+check "T-FS-21a drill-down does NOT dump body line 'Line 10.' (no full-body)" \
+  "! printf '%s' \"\$_fs15_body\" | grep -qF 'Line 10.'"
+check "T-FS-21b drill-down does NOT dump body line 'Line 15.' (no full-body)" \
+  "! printf '%s' \"\$_fs15_body\" | grep -qF 'Line 15.'"
+# But the first-line label IS present (as escaped content)
+check "T-FS-21c drill-down first-line label appears (drill-down test request)" \
+  "printf '%s' \"\$_fs15_body\" | grep -qi 'drill-down test request'"
+
+# --- T-FS-22: double set-membership validation present in dashboard source (N2) ---
+check "T-FS-22a _TASK_VIEW_RE regex present in dashboard source" \
+  "grep -q '_TASK_VIEW_RE' '$DASHBOARD'"
+check "T-FS-22b _discover_tasks_for_repo function present in dashboard source" \
+  "grep -q '_discover_tasks_for_repo' '$DASHBOARD'"
+check "T-FS-22c task_id set-membership check present in dashboard source" \
+  "grep -q 'task_id not in task_set' '$DASHBOARD'"
+
+# --- T-FS-23: loopback still holds for task drill-down server (N1) ---
+check "T-FS-23 BIND_HOST = 127.0.0.1 in dashboard source (N1 — task server)" \
+  "grep -qE 'BIND_HOST = .127\\.0\\.0\\.1.' '$DASHBOARD'"
+
+# --- T-FS-24: no orphan task drill-down server process (N3) ---
+kill "$FS_DRILL_PID" 2>/dev/null || true
+_fs24_wait=0
+while kill -0 "$FS_DRILL_PID" 2>/dev/null && [ $_fs24_wait -lt 30 ]; do
+  sleep 0.1; _fs24_wait=$((_fs24_wait+1))
+done
+check "T-FS-24 no orphan drill-down server process after SIGTERM (N3)" \
+  "! kill -0 '$FS_DRILL_PID' 2>/dev/null"
+FS_DRILL_PID=""
+
+fi  # end: python3 available guard (task drill-down tests)
+
 echo "== T-FS done =="
 
 echo

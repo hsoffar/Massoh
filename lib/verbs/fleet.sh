@@ -502,6 +502,205 @@ _fleet_render_commits() {
   printf '</ul></div>\n'
 }
 
+# _fleet_render_task <repo> <repo_name> <task_id> <task_dir>
+# Render the task drill-down page as HTML to stdout.
+# Shows: breadcrumb, stage-trail index (label + first-line who/what), ledger cost.
+# N4: every interpolated value is HTML-escaped via _board_html_escape.
+# FL1: read-only — no writes to $repo.
+# No full-body dump: shows only stage presence + one-line label/title (scope guard).
+_fleet_render_task() {
+  local repo="$1" repo_name="$2" task_id="$3" task_dir="$4"
+  set -euo pipefail
+
+  local esc_name esc_tid
+  esc_name="$(_board_html_escape "$repo_name")"
+  esc_tid="$(_board_html_escape "$task_id")"
+
+  # URL-safe name for breadcrumb links (minimal percent-encoding matching _fleet_render_index)
+  local url_name
+  url_name="$(printf '%s' "$repo_name" | sed 's|%|%25|g; s| |%20|g; s|"|%22|g; s|<|%3C|g; s|>|%3E|g')"
+
+  _fleet_html_header "Massoh Fleet — ${esc_name} — ${esc_tid}"
+
+  # Breadcrumb: / → /repo/<name> → task
+  printf '<nav>'
+  printf '<a href="/">&larr; Fleet index</a>'
+  printf ' &rsaquo; <a href="/repo/%s">%s</a>' "$url_name" "$esc_name"
+  printf ' &rsaquo; %s' "$esc_tid"
+  printf '</nav>\n'
+
+  printf '<h1>%s</h1>\n' "$esc_tid"
+  printf '<p style="font-size:.82rem;color:#6b7280;"><a href="/repo/%s">&larr; Back to %s board</a></p>\n' \
+    "$url_name" "$esc_name"
+
+  # -----------------------------------------------------------------------
+  # Stage trail — index only (no full body dump; scope + leak guard N4+no-full-body)
+  # For each known stage file present, show: stage label + who/what (file's first line)
+  # "who/what" = the first heading/non-blank line of the file → repo content → treated as
+  # data and HTML-escaped (N4).
+  # -----------------------------------------------------------------------
+  printf '<h2>Packet trail</h2>\n'
+  printf '<table class="task-list">\n'
+  printf '<thead><tr><th>Stage</th><th>File</th><th>First line (title / who)</th></tr></thead>\n'
+  printf '<tbody>\n'
+
+  local found_any_stage=0
+
+  # Known stage files in order (00→06 + common extras)
+  # Format: "stage_label|filename_glob_suffix"
+  local _stage_files
+  _stage_files="
+00_request|00_request.md
+01_product_scope|01_product_scope.md
+02_product_scope|02_product_scope.md
+03_architecture_safety|03_architecture_safety.md
+04_implementation_packet|04_implementation_packet.md
+05_implementation_handoff|05_implementation_handoff.md
+06_review_result|06_review_result.md
+"
+
+  local sf
+  while IFS='|' read -r sf_label sf_file; do
+    [ -n "$sf_label" ] || continue
+    local full_path="${task_dir}/${sf_file}"
+    [ -f "$full_path" ] || continue
+    found_any_stage=1
+
+    # First line: read only the first non-empty, non-whitespace-only line (N4 + no-full-body).
+    # This gives the title/heading — we never read the rest of the file.
+    local first_line=""
+    first_line="$(grep -m1 '[^[:space:]]' "$full_path" 2>/dev/null | head -c 200 || true)"
+    [ -z "$first_line" ] && first_line="(empty)"
+
+    local esc_label esc_sfname esc_first
+    esc_label="$(  _board_html_escape "$sf_label")"
+    esc_sfname="$( _board_html_escape "$sf_file")"
+    esc_first="$(  _board_html_escape "$first_line")"
+
+    printf '<tr><td>%s</td><td>%s</td><td>%s</td></tr>\n' \
+      "$esc_label" "$esc_sfname" "$esc_first"
+  done <<EOF
+$_stage_files
+EOF
+
+  # Also scan for any other files present in the task dir (e.g. 0N_*, handoff, proposal)
+  # that are NOT in the known list above — show them too but only their first line.
+  if [ -d "$task_dir" ]; then
+    local extra_f
+    for extra_f in "$task_dir"/??_*.md "$task_dir"/handoff*.md "$task_dir"/proposal*.md; do
+      [ -f "$extra_f" ] || continue
+      local extra_base
+      extra_base="$(basename "$extra_f")"
+      # Skip files already in the known list above
+      case "$extra_base" in
+        00_request.md|01_product_scope.md|02_product_scope.md| \
+        03_architecture_safety.md|04_implementation_packet.md| \
+        05_implementation_handoff.md|06_review_result.md) continue;;
+      esac
+      found_any_stage=1
+      local extra_label
+      extra_label="$(printf '%s' "$extra_base" | sed 's/\.md$//')"
+      local extra_first=""
+      extra_first="$(grep -m1 '[^[:space:]]' "$extra_f" 2>/dev/null | head -c 200 || true)"
+      [ -z "$extra_first" ] && extra_first="(empty)"
+      local esc_el esc_eb esc_ef
+      esc_el="$(_board_html_escape "$extra_label")"
+      esc_eb="$(_board_html_escape "$extra_base")"
+      esc_ef="$(_board_html_escape "$extra_first")"
+      printf '<tr><td>%s</td><td>%s</td><td>%s</td></tr>\n' "$esc_el" "$esc_eb" "$esc_ef"
+    done
+  fi
+
+  if [ "$found_any_stage" = "0" ]; then
+    printf '<tr><td colspan="3">(no packet files found)</td></tr>\n'
+  fi
+
+  printf '</tbody>\n</table>\n'
+
+  # -----------------------------------------------------------------------
+  # Ledger cost — rows in .agent_tasks/ledger.tsv for this task_id only.
+  # Per-stage tokens/seconds + totals. Graceful degrade: no rows → message.
+  # FL1: read-only (awk on ledger.tsv).
+  # -----------------------------------------------------------------------
+  printf '<h2>Cost (ledger)</h2>\n'
+  local ledger_file="${repo}/.agent_tasks/ledger.tsv"
+
+  if [ ! -f "$ledger_file" ]; then
+    printf '<p style="color:#6b7280;font-size:.85rem;">(no cost recorded)</p>\n'
+  else
+    # Extract rows for this task_id only, compute per-stage + totals.
+    # N4: all values from the ledger are repo data → HTML-escape before interpolation.
+    local ledger_html
+    ledger_html="$(awk -F'\t' -v tid="$task_id" '
+      # Skip malformed rows (< 5 fields) and non-matching task-ids
+      NF < 5 { next }
+      $2 != tid { next }
+      $4 !~ /^[0-9]+$/ || $5 !~ /^[0-9]+$/ { next }
+      {
+        rows[NR]["ts"]    = $1
+        rows[NR]["stage"] = $3
+        rows[NR]["tok"]   = $4 + 0
+        rows[NR]["sec"]   = $5 + 0
+        total_tok += $4 + 0
+        total_sec += $5 + 0
+        found++
+      }
+      END {
+        if (!found) {
+          print "NONE"
+          exit
+        }
+        for (r in rows) {
+          printf "ROW\t%s\t%s\t%d\t%d\n", rows[r]["ts"], rows[r]["stage"], rows[r]["tok"], rows[r]["sec"]
+        }
+        printf "TOT\t%d\t%d\n", total_tok, total_sec
+      }
+    ' "$ledger_file" 2>/dev/null || printf 'NONE\n')"
+
+    if [ "$ledger_html" = "NONE" ] || [ -z "$ledger_html" ]; then
+      printf '<p style="color:#6b7280;font-size:.85rem;">(no cost recorded)</p>\n'
+    else
+      printf '<table class="task-list">\n'
+      printf '<thead><tr><th>Timestamp</th><th>Stage</th><th>Tokens</th><th>Seconds</th></tr></thead>\n'
+      printf '<tbody>\n'
+      local line
+      while IFS= read -r line; do
+        case "$line" in
+          ROW*)
+            local ts_val stg_val tok_val sec_val
+            ts_val="$( printf '%s' "$line" | cut -f2)"
+            stg_val="$(printf '%s' "$line" | cut -f3)"
+            tok_val="$(printf '%s' "$line" | cut -f4)"
+            sec_val="$(printf '%s' "$line" | cut -f5)"
+            local ets estg etok esec
+            ets="$( _board_html_escape "$ts_val")"
+            estg="$(_board_html_escape "$stg_val")"
+            etok="$(_board_html_escape "$tok_val")"
+            esec="$(_board_html_escape "$sec_val")"
+            printf '<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>\n' \
+              "$ets" "$estg" "$etok" "$esec"
+            ;;
+          TOT*)
+            local tot_tok tot_sec
+            tot_tok="$(printf '%s' "$line" | cut -f2)"
+            tot_sec="$(printf '%s' "$line" | cut -f3)"
+            local etottok etotssec
+            etottok="$(_board_html_escape "$tot_tok")"
+            etotssec="$(_board_html_escape "$tot_sec")"
+            printf '<tr style="font-weight:600;background:#e5e7eb;"><td colspan="2">TOTAL</td><td>%s</td><td>%s</td></tr>\n' \
+              "$etottok" "$etotssec"
+            ;;
+        esac
+      done <<EOF2
+$ledger_html
+EOF2
+      printf '</tbody>\n</table>\n'
+    fi
+  fi
+
+  _fleet_html_footer
+}
+
 # _fleet_discover_repos_list <fleet_root_or_tsv> <tsv_mode:0|1>
 # Print a newline-separated list of repo absolute paths.
 _fleet_discover_repos_list() {
