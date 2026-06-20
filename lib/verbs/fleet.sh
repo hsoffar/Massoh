@@ -103,10 +103,62 @@ EOF
   printf '  last-agent: %s  last-mode: %s\n' "$last_agent" "$last_mode"
 }
 
+# --- fleet serve subcommand (N1/N2/N3/N7 from 00_architecture_review.md) ---
+# massoh fleet serve [--port N]
+# Starts scripts/massoh-dashboard (Python stdlib only) bound to 127.0.0.1 (hard-coded, N1).
+# --port is the only knob (default 8787). If python3 is absent: clear message + exit non-zero (N7).
+# set -euo pipefail safe: all fallible commands guarded.
+_fleet_serve() {
+  set -euo pipefail
+  local port=8787
+
+  while [ $# -gt 0 ]; do case "$1" in
+    --port) shift; port="${1:-8787}";;
+    --help|-h)
+      printf 'massoh fleet serve [--port N]\n'
+      printf '\n'
+      printf 'Start the Massoh Fleet dashboard server.\n'
+      printf '  Binds to 127.0.0.1 ONLY (not configurable).\n'
+      printf '  Default port: 8787. Override with --port N.\n'
+      printf '  Requires: python3 (stdlib; no pip deps).\n'
+      printf '  Stop with Ctrl-C or SIGTERM.\n'
+      return 0
+      ;;
+    *) die "unknown fleet serve flag: $1";;
+  esac; shift; done
+
+  # N7: guard — python3 must be present; if absent, clear message + non-zero exit.
+  if ! command -v python3 >/dev/null 2>&1; then
+    printf 'massoh fleet serve: python3 is required but not found.\n' >&2
+    printf '  Install python3 to use the fleet dashboard.\n' >&2
+    return 1
+  fi
+
+  # Locate scripts/massoh-dashboard relative to the Massoh home (same pattern as bin/massoh).
+  local dashboard
+  dashboard="${MASSOH_HOME:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)}/scripts/massoh-dashboard"
+
+  if ! [ -f "$dashboard" ]; then
+    printf 'massoh fleet serve: dashboard script not found: %s\n' "$dashboard" >&2
+    printf '  Re-run "massoh install" to restore it.\n' >&2
+    return 1
+  fi
+
+  # N1: host is hard-coded 127.0.0.1 here in the caller too (belt-and-suspenders).
+  # The dashboard script also enforces this independently.
+  # exec replaces the shell process so no orphan parent lingers (N3).
+  exec python3 "$dashboard" --port "$port"
+}
+
 cmd_fleet() {
   # FL8: local-only, no upload
   local fleet_root="" use_cache=0 tsv_file=""
   local maxdepth
+
+  # Dispatch subcommands first (before option parsing).
+  case "${1:-}" in
+    serve) shift; _fleet_serve "$@"; return $?;;
+  esac
 
   while [ $# -gt 0 ]; do case "$1" in
     --root)      shift; fleet_root="${1:-}";;
@@ -114,8 +166,10 @@ cmd_fleet() {
     --cache)     use_cache=1;;
     --help|-h)
       printf 'massoh fleet [--root <dir>] [--no-cache]\n'
+      printf 'massoh fleet serve [--port N]\n'
       printf '\n'
       printf 'Discover opted-in Massoh repos and print a per-repo rollup.\n'
+      printf 'Use "massoh fleet serve" to start the observability dashboard.\n'
       printf '\n'
       printf 'Discovery modes (tried in order):\n'
       printf '  1. --root <dir>   scan <dir> (find -maxdepth 3) for .massoh markers\n'
