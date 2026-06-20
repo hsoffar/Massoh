@@ -18,6 +18,513 @@
 # --- fleet.tsv default path (overridable via env var; never sourced) ---
 _FLEET_TSV_DEFAULT="${HOME}/.claude/massoh/fleet.tsv"
 
+# ---------------------------------------------------------------------------
+# Fleet HTML rendering (Seam A — bash renders + escapes, server is transport)
+# ---------------------------------------------------------------------------
+# All functions below are READ-ONLY with respect to every discovered repo.
+# They print HTML to stdout; the server captures and forwards that output.
+# Every interpolated value is passed through _board_html_escape (from board.sh,
+# which must be sourced before these functions are called).
+# ---------------------------------------------------------------------------
+
+# _fleet_read_version <repo>
+# Print the VERSION file content, or "—" if missing.
+_fleet_read_version() {
+  local repo="$1"
+  local ver_file="${repo}/VERSION"
+  if [ -f "$ver_file" ]; then
+    head -n1 "$ver_file" 2>/dev/null | tr -d '\n\r' || printf '—'
+  else
+    printf '—'
+  fi
+}
+
+# _fleet_repo_kpis <repo>
+# Emit a tab-separated line: open_tasks<TAB>blocked<TAB>throughput<TAB>rework<TAB>cycle<TAB>tokens<TAB>cost<TAB>last_agent<TAB>last_mode<TAB>version
+# All values are read-only (FL1). Missing files → "—".
+_fleet_repo_kpis() {
+  local repo="$1"
+
+  # --- task counts (from .agent_tasks/TASK-*/) ---
+  local open_tasks=0 blocked=0
+  local tasks_dir="${repo}/.agent_tasks"
+  local backlog_file="${repo}/AGENT_BACKLOG.md"
+
+  if [ -d "$tasks_dir" ]; then
+    local task_dirs
+    task_dirs="$(find "$tasks_dir" -mindepth 1 -maxdepth 1 -type d -name 'TASK-*' 2>/dev/null | head -n 100 || true)"
+    if [ -n "$task_dirs" ]; then
+      local td
+      while IFS= read -r td; do
+        [ -d "$td" ] || continue
+        # not-done = open (no 06_review_result.md)
+        if ! [ -f "${td}/06_review_result.md" ]; then
+          open_tasks=$((open_tasks+1))
+        fi
+      done <<EOF
+$task_dirs
+EOF
+    fi
+  fi
+
+  if [ -f "$backlog_file" ]; then
+    blocked="$(grep -c '| BLOCKED |' "$backlog_file" 2>/dev/null || true)"
+    [ -z "$blocked" ] && blocked=0
+  fi
+
+  # --- KPIs from METRICS.md (last snapshot; reuse, don't recompute) ---
+  local throughput="—" rework="—" cycle="—"
+  local metrics_file="${repo}/agent-project/METRICS.md"
+  if [ -f "$metrics_file" ]; then
+    # Extract the last values from the most recent ## Snapshot block.
+    # We search for the last occurrence of each key.
+    local m_content
+    m_content="$(cat "$metrics_file" 2>/dev/null || true)"
+    local t_val r_val c_val
+    t_val="$(printf '%s\n' "$m_content" | grep -oE 'throughput/wk=[^ ]+' | tail -n1 | sed 's/throughput\/wk=//' || true)"
+    r_val="$(printf '%s\n' "$m_content" | grep -oE 'rework_pct=[^ ]+' | tail -n1 | sed 's/rework_pct=//' || true)"
+    c_val="$(printf '%s\n' "$m_content" | grep -oE 'cycle_avg_days=[^ ]+' | tail -n1 | sed 's/cycle_avg_days=//' || true)"
+    [ -n "$t_val" ] && throughput="$t_val"
+    [ -n "$r_val" ] && rework="${r_val}%"
+    [ -n "$c_val" ] && cycle="$c_val"
+  fi
+
+  # --- tokens + cost from ledger.tsv (reuse; don't recompute) ---
+  local tokens="—" cost="—"
+  local ledger_file="${repo}/.agent_tasks/ledger.tsv"
+  if [ -f "$ledger_file" ]; then
+    local ledger_agg
+    ledger_agg="$(awk -F'\t' '
+      NF>=5 && $4~/^[0-9]+$/ && $5~/^[0-9]+$/ {
+        total_tok += $4
+        total_sec += $5
+      }
+      END { printf "%d\t%d\n", total_tok, total_sec }
+    ' "$ledger_file" 2>/dev/null || true)"
+    if [ -n "$ledger_agg" ]; then
+      tokens="$(printf '%s' "$ledger_agg" | cut -f1)"
+      local secs
+      secs="$(printf '%s' "$ledger_agg" | cut -f2)"
+      # Convert seconds to cost approximation (display minutes of compute time)
+      cost="${secs}s"
+    fi
+  fi
+
+  # --- last-handoff from AGENT_SYNC.md ---
+  local last_agent="—" last_mode="—"
+  local sync_file="${repo}/AGENT_SYNC.md"
+  if [ -f "$sync_file" ]; then
+    local sync_content
+    sync_content="$(head -n 200 "$sync_file" 2>/dev/null || true)"
+    local agent_line mode_line
+    agent_line="$(printf '%s\n' "$sync_content" | grep -iE '^(Agent|Current agent):' 2>/dev/null | tail -n1 || true)"
+    [ -n "$agent_line" ] && last_agent="$(printf '%s\n' "$agent_line" | sed 's/^[^:]*: *//' | head -c 80 || true)"
+    mode_line="$(printf '%s\n' "$sync_content" | grep -iE '^(Mode|Current mode|Strategic mode):' 2>/dev/null | tail -n1 || true)"
+    [ -n "$mode_line" ] && last_mode="$(printf '%s\n' "$mode_line" | sed 's/^[^:]*: *//' | head -c 80 || true)"
+    [ -z "$last_agent" ] && last_agent="—"
+    [ -z "$last_mode" ] && last_mode="—"
+  fi
+
+  # --- version ---
+  local version
+  version="$(_fleet_read_version "$repo")"
+
+  # Output all fields tab-separated (callers parse by position)
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$open_tasks" "$blocked" "$throughput" "$rework" "$cycle" \
+    "$tokens" "$cost" "$last_agent" "$last_mode" "$version"
+}
+
+# _fleet_html_header <title>
+# Emit the common HTML <head> opening (sentinel on first line, N4: title is already escaped by caller).
+_fleet_html_header() {
+  local title="$1"
+  printf '<!-- massoh-generated -->\n'
+  printf '<!DOCTYPE html>\n'
+  printf '<html lang="en">\n'
+  printf '<head>\n'
+  printf '<meta charset="UTF-8">\n'
+  printf '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+  printf '<meta http-equiv="refresh" content="30">\n'
+  printf '<title>%s</title>\n' "$title"
+  printf '<style>\n'
+  printf 'body{font-family:system-ui,sans-serif;margin:0;padding:1rem 1.5rem;background:#f3f4f6;color:#111827;}\n'
+  printf 'h1{font-size:1.3rem;margin:0 0 .5rem;}\n'
+  printf 'h2{font-size:1.1rem;margin:1rem 0 .5rem;}\n'
+  printf 'nav{font-size:.85rem;margin-bottom:1rem;color:#6b7280;}\n'
+  printf 'nav a{color:#2563eb;text-decoration:none;}\n'
+  printf 'nav a:hover{text-decoration:underline;}\n'
+  printf 'table{border-collapse:collapse;width:100%%;background:#fff;border-radius:.5rem;box-shadow:0 1px 3px rgba(0,0,0,.1);font-size:.85rem;}\n'
+  printf 'th{background:#e5e7eb;padding:.5rem .75rem;text-align:left;font-weight:600;white-space:nowrap;}\n'
+  printf 'td{padding:.45rem .75rem;border-top:1px solid #e5e7eb;vertical-align:top;word-break:break-word;}\n'
+  printf 'tr:hover td{background:#f9fafb;}\n'
+  printf 'a.repo-link{color:#2563eb;font-weight:600;text-decoration:none;}\n'
+  printf 'a.repo-link:hover{text-decoration:underline;}\n'
+  printf '.kpi-panel{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;background:#fff;border-radius:.5rem;padding:.75rem 1rem;box-shadow:0 1px 3px rgba(0,0,0,.1);margin-bottom:1rem;font-size:.85rem;}\n'
+  printf '.kpi-item{display:flex;flex-direction:column;}\n'
+  printf '.kpi-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;}\n'
+  printf '.kpi-value{font-weight:600;font-size:1rem;}\n'
+  printf '.board{display:flex;gap:.75rem;overflow-x:auto;margin-bottom:1rem;}\n'
+  printf '.col{background:#fff;border-radius:.5rem;padding:.75rem;min-width:180px;max-width:230px;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.1);}\n'
+  printf '.col h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;margin:0 0 .5rem;}\n'
+  printf '.card{background:#f9fafb;border:1px solid #e5e7eb;border-radius:.375rem;padding:.4rem .5rem;margin-bottom:.4rem;font-size:.78rem;}\n'
+  printf '.card .title{font-weight:600;word-break:break-word;}\n'
+  printf '.card .meta{color:#6b7280;margin-top:.2rem;font-size:.72rem;}\n'
+  printf '.card.blocked{border-left:3px solid #ef4444;}\n'
+  printf '.empty{color:#9ca3af;font-size:.75rem;font-style:italic;}\n'
+  printf '.task-list{width:100%%;border-collapse:collapse;background:#fff;border-radius:.5rem;box-shadow:0 1px 3px rgba(0,0,0,.1);font-size:.83rem;}\n'
+  printf '.task-list th{background:#e5e7eb;padding:.4rem .75rem;text-align:left;font-weight:600;}\n'
+  printf '.task-list td{padding:.4rem .75rem;border-top:1px solid #e5e7eb;}\n'
+  printf '.commit-list{font-size:.8rem;font-family:monospace;background:#fff;border-radius:.5rem;padding:.5rem 1rem;box-shadow:0 1px 3px rgba(0,0,0,.1);margin-bottom:1rem;}\n'
+  printf '.commit-list li{margin:.2rem 0;list-style:disc;margin-left:1.2rem;}\n'
+  printf '.sibling-nav{font-size:.82rem;margin-bottom:.75rem;}\n'
+  printf '.sibling-nav a{color:#2563eb;margin-right:.75rem;text-decoration:none;}\n'
+  printf '.sibling-nav a:hover{text-decoration:underline;}\n'
+  printf 'footer{margin-top:1.5rem;font-size:.75rem;color:#9ca3af;}\n'
+  printf '</style>\n'
+  printf '</head>\n'
+  printf '<body>\n'
+}
+
+# _fleet_html_footer
+# Emit closing HTML tags.
+_fleet_html_footer() {
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+  printf '<footer>massoh-generated &mdash; %s &mdash; meta-refresh 30s (read-only, no agent exec)</footer>\n' \
+    "$(_board_html_escape "$ts")"
+  printf '</body>\n</html>\n'
+}
+
+# _fleet_render_index <repo_root_or_tsv> <tsv_mode:0|1>
+# Render the fleet index page as HTML to stdout.
+# $1 = fleet_root (--root mode) OR tsv_path (tsv mode)
+# $2 = 0 for root-scan mode, 1 for tsv-registry mode
+# N4: every interpolated value goes through _board_html_escape.
+# FL1: read-only on all repos.
+_fleet_render_index() {
+  local fleet_root_or_tsv="$1" tsv_mode="${2:-0}"
+
+  # Collect repos into a list (same discovery logic as cmd_fleet, reused)
+  local repo_list=""
+  if [ "$tsv_mode" = "0" ]; then
+    local maxdepth
+    maxdepth="$(_fleet_maxdepth)"
+    if [ -d "$fleet_root_or_tsv" ]; then
+      repo_list="$(find "$fleet_root_or_tsv" -maxdepth "$maxdepth" -name '.massoh' -type f \
+        2>/dev/null | head -n 200 | sed 's|/\.massoh$||' || true)"
+    fi
+  else
+    # TSV registry mode: read file, skip blanks/comments, skip non-directories
+    if [ -f "$fleet_root_or_tsv" ]; then
+      while IFS= read -r line; do
+        case "$line" in ''|\#*) continue;; esac
+        [ "${#line}" -gt 4096 ] && continue
+        [ -d "$line" ] || continue
+        repo_list="${repo_list}${line}
+"
+      done < "$fleet_root_or_tsv"
+    fi
+  fi
+
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+
+  _fleet_html_header "Massoh Fleet"
+  printf '<h1>Massoh Fleet</h1>\n'
+  printf '<p style="font-size:.82rem;color:#6b7280;">Updated: %s &mdash; auto-refresh 30s</p>\n' \
+    "$(_board_html_escape "$ts")"
+
+  if [ -z "$(printf '%s' "$repo_list" | tr -d '[:space:]')" ]; then
+    printf '<p>(no opted-in repos found)</p>\n'
+    _fleet_html_footer
+    return 0
+  fi
+
+  # Table header
+  printf '<table>\n<thead><tr>\n'
+  printf '<th>Repo</th><th>Open</th><th>Blocked</th><th>Throughput/wk</th>'
+  printf '<th>Rework%%</th><th>Cycle (days)</th><th>Tokens</th><th>Compute</th>'
+  printf '<th>Last Agent</th><th>Mode</th><th>Version</th>\n'
+  printf '</tr></thead>\n<tbody>\n'
+
+  while IFS= read -r rp; do
+    [ -n "$rp" ] || continue
+    [ -d "$rp" ] || continue
+
+    # N4: repo basename is interpolated — must be escaped
+    local repo_name
+    repo_name="$(basename "$rp")"
+    local esc_name
+    esc_name="$(_board_html_escape "$repo_name")"
+
+    # Read KPI fields (graceful degrade: on error show all "—")
+    local kpi_line
+    kpi_line="$(_fleet_repo_kpis "$rp" 2>/dev/null || printf '—\t—\t—\t—\t—\t—\t—\t—\t—\t—\n')"
+
+    # Parse tab-separated KPI fields (N4: all escaped before interpolation)
+    local open_tasks blocked throughput rework cycle tokens cost last_agent last_mode version
+    open_tasks="$(  printf '%s' "$kpi_line" | cut -f1)"
+    blocked="$(     printf '%s' "$kpi_line" | cut -f2)"
+    throughput="$(  printf '%s' "$kpi_line" | cut -f3)"
+    rework="$(      printf '%s' "$kpi_line" | cut -f4)"
+    cycle="$(       printf '%s' "$kpi_line" | cut -f5)"
+    tokens="$(      printf '%s' "$kpi_line" | cut -f6)"
+    cost="$(        printf '%s' "$kpi_line" | cut -f7)"
+    last_agent="$(  printf '%s' "$kpi_line" | cut -f8)"
+    last_mode="$(   printf '%s' "$kpi_line" | cut -f9)"
+    version="$(     printf '%s' "$kpi_line" | cut -f10)"
+
+    # N4: every field escaped
+    local e_open e_blocked e_thru e_rework e_cycle e_tokens e_cost e_agent e_mode e_ver
+    e_open="$(    _board_html_escape "$open_tasks")"
+    e_blocked="$( _board_html_escape "$blocked")"
+    e_thru="$(    _board_html_escape "$throughput")"
+    e_rework="$(  _board_html_escape "$rework")"
+    e_cycle="$(   _board_html_escape "$cycle")"
+    e_tokens="$(  _board_html_escape "$tokens")"
+    e_cost="$(    _board_html_escape "$cost")"
+    e_agent="$(   _board_html_escape "$last_agent")"
+    e_mode="$(    _board_html_escape "$last_mode")"
+    e_ver="$(     _board_html_escape "$version")"
+
+    # N2/N4: repo name used only as an HTML text + URL value, escaped both ways;
+    # the actual filesystem lookup on /repo/<name> is done by the server via set-membership.
+    local url_name
+    url_name="$(printf '%s' "$repo_name" | sed 's|%|%25|g; s| |%20|g; s|"|%22|g; s|<|%3C|g; s|>|%3E|g')"
+
+    printf '<tr><td><a class="repo-link" href="/repo/%s">%s</a></td>' \
+      "$url_name" "$esc_name"
+    printf '<td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>' \
+      "$e_open" "$e_blocked" "$e_thru" "$e_rework" "$e_cycle"
+    printf '<td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>' \
+      "$e_tokens" "$e_cost" "$e_agent" "$e_mode" "$e_ver"
+    printf '</tr>\n'
+  done <<EOF
+$repo_list
+EOF
+
+  printf '</tbody>\n</table>\n'
+  _fleet_html_footer
+}
+
+# _fleet_render_repo <repo> <repo_name> <all_repos_newline_separated>
+# Render a single-repo view page as HTML to stdout.
+# N4: every interpolated value is HTML-escaped.
+# FL1: read-only on $repo.
+_fleet_render_repo() {
+  local repo="$1" repo_name="$2" all_repos="$3"
+
+  local esc_name
+  esc_name="$(_board_html_escape "$repo_name")"
+
+  _fleet_html_header "Massoh Fleet — $esc_name"
+
+  # Breadcrumb
+  printf '<nav><a href="/">&larr; Fleet index</a></nav>\n'
+
+  # Sibling nav (A↔B links)
+  if [ -n "$all_repos" ]; then
+    printf '<div class="sibling-nav">Repos: '
+    while IFS= read -r sibling_path; do
+      [ -n "$sibling_path" ] || continue
+      [ -d "$sibling_path" ] || continue
+      local sib_name
+      sib_name="$(basename "$sibling_path")"
+      local esc_sib
+      esc_sib="$(_board_html_escape "$sib_name")"
+      local url_sib
+      url_sib="$(printf '%s' "$sib_name" | sed 's|%|%25|g; s| |%20|g; s|"|%22|g; s|<|%3C|g; s|>|%3E|g')"
+      if [ "$sib_name" = "$repo_name" ]; then
+        printf '<strong>%s</strong> ' "$esc_sib"
+      else
+        printf '<a href="/repo/%s">%s</a> ' "$url_sib" "$esc_sib"
+      fi
+    done <<EOF2
+$all_repos
+EOF2
+    printf '</div>\n'
+  fi
+
+  printf '<h1>%s</h1>\n' "$esc_name"
+
+  # KPI panel
+  local kpi_line
+  kpi_line="$(_fleet_repo_kpis "$repo" 2>/dev/null || printf '—\t—\t—\t—\t—\t—\t—\t—\t—\t—\n')"
+  local open_tasks blocked throughput rework cycle tokens cost last_agent last_mode version
+  open_tasks="$(  printf '%s' "$kpi_line" | cut -f1)"
+  blocked="$(     printf '%s' "$kpi_line" | cut -f2)"
+  throughput="$(  printf '%s' "$kpi_line" | cut -f3)"
+  rework="$(      printf '%s' "$kpi_line" | cut -f4)"
+  cycle="$(       printf '%s' "$kpi_line" | cut -f5)"
+  tokens="$(      printf '%s' "$kpi_line" | cut -f6)"
+  cost="$(        printf '%s' "$kpi_line" | cut -f7)"
+  last_agent="$(  printf '%s' "$kpi_line" | cut -f8)"
+  last_mode="$(   printf '%s' "$kpi_line" | cut -f9)"
+  version="$(     printf '%s' "$kpi_line" | cut -f10)"
+
+  printf '<div class="kpi-panel">\n'
+  _fleet_kpi_item "Open tasks"   "$open_tasks"
+  _fleet_kpi_item "Blocked"      "$blocked"
+  _fleet_kpi_item "Throughput/wk" "$throughput"
+  _fleet_kpi_item "Rework"       "$rework"
+  _fleet_kpi_item "Cycle (days)" "$cycle"
+  _fleet_kpi_item "Tokens"       "$tokens"
+  _fleet_kpi_item "Compute"      "$cost"
+  _fleet_kpi_item "Last agent"   "$last_agent"
+  _fleet_kpi_item "Mode"         "$last_mode"
+  _fleet_kpi_item "Version"      "$version"
+  printf '</div>\n'
+
+  # Kanban board (reuse _board_build_model + _board_emit_local rendering, adapted for stdout)
+  printf '<h2>Kanban</h2>\n'
+  _fleet_render_board_inline "$repo"
+
+  # Task list
+  printf '<h2>Tasks</h2>\n'
+  _fleet_render_task_list "$repo"
+
+  # Recent commits
+  printf '<h2>Recent commits</h2>\n'
+  _fleet_render_commits "$repo"
+
+  _fleet_html_footer
+}
+
+# _fleet_kpi_item <label> <value>
+# Emit a single KPI panel item. N4: both label and value are escaped.
+_fleet_kpi_item() {
+  local label="$1" value="$2"
+  local esc_label esc_value
+  esc_label="$(_board_html_escape "$label")"
+  esc_value="$(_board_html_escape "$value")"
+  printf '<div class="kpi-item"><span class="kpi-label">%s</span><span class="kpi-value">%s</span></div>\n' \
+    "$esc_label" "$esc_value"
+}
+
+# _fleet_render_board_inline <repo>
+# Render an inline kanban board (same data as _board_emit_local but to stdout, not a file).
+# N4: all fields escaped. FL1: read-only.
+_fleet_render_board_inline() {
+  local repo="$1"
+
+  # Reuse _board_build_model (from board.sh, which must be sourced)
+  _board_build_model "$repo"
+
+  local n="${#_BOARD_IDS[@]}"
+  local stages="backlog scoping arch-safety licensed implementing review merged"
+
+  printf '<div class="board">\n'
+  local stage
+  for stage in $stages; do
+    local esc_stage
+    esc_stage="$(_board_html_escape "$stage")"
+    printf '<div class="col"><h2>%s</h2>\n' "$esc_stage"
+    local found_any=0 i
+    for (( i=0; i<n; i++ )); do
+      if [ "${_BOARD_STAGES[$i]}" = "$stage" ]; then
+        found_any=1
+        local esc_tid esc_title esc_agent
+        esc_tid="$(   _board_html_escape "${_BOARD_IDS[$i]}")"
+        esc_title="$( _board_html_escape "${_BOARD_TITLES[$i]}")"
+        esc_agent="$( _board_html_escape "${_BOARD_LAST_AGENTS[$i]}")"
+        local blocked_cls=""
+        [ "${_BOARD_BLOCKED[$i]}" = "true" ] && blocked_cls=" blocked"
+        printf '<div class="card%s"><div class="title">%s</div>' "$blocked_cls" "$esc_title"
+        printf '<div class="meta">%s</div>' "$esc_tid"
+        printf '<div class="meta">agent: %s</div></div>\n' "$esc_agent"
+      fi
+    done
+    [ "$found_any" = "0" ] && printf '<div class="empty">(empty)</div>\n'
+    printf '</div>\n'
+  done
+  printf '</div>\n'
+}
+
+# _fleet_render_task_list <repo>
+# Render a table of tasks with stage and last-handoff. N4: all escaped.
+_fleet_render_task_list() {
+  local repo="$1"
+  local tasks_dir="${repo}/.agent_tasks"
+  local sync_file="${repo}/AGENT_SYNC.md"
+
+  # Read last-handoff agent once
+  local last_agent="—"
+  if [ -f "$sync_file" ]; then
+    local agent_line
+    agent_line="$(head -n 200 "$sync_file" 2>/dev/null | grep -iE '^(Agent|Current agent):' 2>/dev/null | tail -n1 || true)"
+    [ -n "$agent_line" ] && last_agent="$(printf '%s\n' "$agent_line" | sed 's/^[^:]*: *//' | head -c 80 || true)"
+    [ -z "$last_agent" ] && last_agent="—"
+  fi
+
+  printf '<table class="task-list">\n'
+  printf '<thead><tr><th>Task ID</th><th>Stage</th><th>Last Agent</th></tr></thead>\n'
+  printf '<tbody>\n'
+
+  local found_any=0
+  if [ -d "$tasks_dir" ]; then
+    local d
+    for d in "$tasks_dir"/TASK-*/; do
+      [ -d "$d" ] || continue
+      found_any=1
+      local task_id stage
+      task_id="$(basename "$d")"
+      stage="$(_board_stage_from_dir "$d")"
+      local esc_tid esc_stage esc_agent
+      esc_tid="$(   _board_html_escape "$task_id")"
+      esc_stage="$( _board_html_escape "$stage")"
+      esc_agent="$( _board_html_escape "$last_agent")"
+      printf '<tr><td>%s</td><td>%s</td><td>%s</td></tr>\n' \
+        "$esc_tid" "$esc_stage" "$esc_agent"
+    done
+  fi
+
+  [ "$found_any" = "0" ] && printf '<tr><td colspan="3">(no tasks)</td></tr>\n'
+  printf '</tbody>\n</table>\n'
+}
+
+# _fleet_render_commits <repo>
+# Render a list of recent git commits. N4: all output escaped. FL1: git log is read-only.
+_fleet_render_commits() {
+  local repo="$1"
+  printf '<div class="commit-list"><ul>\n'
+  if git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+    local commit_line
+    while IFS= read -r commit_line; do
+      [ -n "$commit_line" ] || continue
+      local esc_commit
+      esc_commit="$(_board_html_escape "$commit_line")"
+      printf '<li>%s</li>\n' "$esc_commit"
+    done < <(git -C "$repo" log -n 10 --oneline 2>/dev/null || true)
+  else
+    printf '<li>(not a git repo)</li>\n'
+  fi
+  printf '</ul></div>\n'
+}
+
+# _fleet_discover_repos_list <fleet_root_or_tsv> <tsv_mode:0|1>
+# Print a newline-separated list of repo absolute paths.
+_fleet_discover_repos_list() {
+  local fleet_root_or_tsv="$1" tsv_mode="${2:-0}"
+  if [ "$tsv_mode" = "0" ]; then
+    local maxdepth
+    maxdepth="$(_fleet_maxdepth)"
+    if [ -d "$fleet_root_or_tsv" ]; then
+      find "$fleet_root_or_tsv" -maxdepth "$maxdepth" -name '.massoh' -type f \
+        2>/dev/null | head -n 200 | sed 's|/\.massoh$||' || true
+    fi
+  else
+    if [ -f "$fleet_root_or_tsv" ]; then
+      while IFS= read -r line; do
+        case "$line" in ''|\#*) continue;; esac
+        [ "${#line}" -gt 4096 ] && continue
+        [ -d "$line" ] || continue
+        printf '%s\n' "$line"
+      done < "$fleet_root_or_tsv"
+    fi
+  fi
+}
+
 # --- FL2: maxdepth default; overridable via MASSOH_FLEET_MAXDEPTH, capped at 5 ---
 _fleet_maxdepth() {
   local d="${MASSOH_FLEET_MAXDEPTH:-3}"

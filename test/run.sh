@@ -3265,6 +3265,185 @@ check "T-FS-5b python3 absent → message mentions python3" \
 check "T-FS-6 massoh-dashboard imports stdlib only (no PyYAML, no pip)" \
   "! grep -qE '^import yaml|^from yaml|^import PyYAML' '$DASHBOARD'"
 
+# ===========================================================================
+# == T-FS-7..12: fleet dashboard content (slice 1a) =========================
+# ===========================================================================
+# These tests require python3 (guarded above) and a running dashboard server.
+# Fake repos are ephemeral under $TMP; they are never written to during
+# renders (read-only byte-snapshot test T-FS-12 asserts this).
+# ===========================================================================
+
+if ! command -v python3 >/dev/null 2>&1; then
+  ok "T-FS-7..12 python3 absent — content tests skipped"
+else
+
+# --- Helpers: build two minimal fake Massoh repos ---
+_mk_fleet_repo() {
+  local d="$1" name="$2"
+  mkdir -p "$d/.agent_tasks" "$d/agent-project"
+  ( cd "$d" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+  printf 'massoh project marker\n' > "$d/.massoh"
+  printf '# AGENT_SYNC\n\nAgent: test-agent\nMode: IMPLEMENTATION\n\n## Decision log\n' > "$d/AGENT_SYNC.md"
+  printf '| # | Pri | Item | Why | Status |\n|---|---|---|---|---|\n| 1 | P1 | item | why | TODO |\n| 2 | P1 | blocked-item | z | BLOCKED |\n' > "$d/AGENT_BACKLOG.md"
+  # One open task (no 06), one completed (has 06)
+  mkdir -p "$d/.agent_tasks/TASK-open-1"
+  printf '# 00\n# %s open task\n' "$name" > "$d/.agent_tasks/TASK-open-1/00_request.md"
+  mkdir -p "$d/.agent_tasks/TASK-done-1"
+  printf '# 06\n## Decision: APPROVE\n' > "$d/.agent_tasks/TASK-done-1/06_review_result.md"
+  # Ledger row
+  printf '%s\t%s\t%s\t%s\t%s\n' "2026-06-20T00:00:00Z" "TASK-open-1" "scope" "500" "60" >> "$d/.agent_tasks/ledger.tsv"
+  # METRICS snapshot
+  {
+    printf '\n## Snapshot 2026-06-20T00:00:00Z (v0.20.0)\n'
+    printf '- throughput/wk=2\n- rework_pct=0\n- cycle_avg_days=3\n'
+  } >> "$d/agent-project/METRICS.md"
+  printf '0.20.0\n' > "$d/VERSION"
+  ( cd "$d" && git add -A && git commit -qm "feat: seed fleet repo $name" )
+}
+
+# Create a fleet root dir containing two fake repos
+FS_FLEET_ROOT="$TMP/fleet_root"
+mkdir -p "$FS_FLEET_ROOT"
+FS_REPO_A="$FS_FLEET_ROOT/alpha-repo"
+FS_REPO_B="$FS_FLEET_ROOT/beta-repo"
+_mk_fleet_repo "$FS_REPO_A" "alpha-repo"
+_mk_fleet_repo "$FS_REPO_B" "beta-repo"
+
+# Add a task with a potentially dangerous title (for T-FS-11 escape test).
+# _board_build_model reads title from the first ^# heading line — put the XSS title there.
+mkdir -p "$FS_REPO_A/.agent_tasks/TASK-xss"
+printf '# <script>alert(1)</script> & "xss-task"\n\nThis task tests HTML escaping.\n' \
+  > "$FS_REPO_A/.agent_tasks/TASK-xss/00_request.md"
+( cd "$FS_REPO_A" && git add -A && git commit -qm "feat: add xss-title task" )
+
+# Pick a free port for the content tests
+FS_CONTENT_PORT="$(_fs_free_port)"
+FS_CONTENT_PID=""
+
+# Start the server with MASSOH_FLEET_ROOT pointing at our fake fleet root
+MASSOH_FLEET_ROOT="$FS_FLEET_ROOT" \
+  MASSOH_HOME="$REPO_ROOT" \
+  python3 "$DASHBOARD" --port "$FS_CONTENT_PORT" >/dev/null 2>&1 &
+FS_CONTENT_PID=$!
+
+# Wait up to 5 seconds for the server to be ready
+_fs_cwait=0
+until curl -s --connect-timeout 0.3 "http://127.0.0.1:${FS_CONTENT_PORT}/" >/dev/null 2>&1 \
+    || [ $_fs_cwait -ge 50 ]; do
+  sleep 0.1; _fs_cwait=$((_fs_cwait+1))
+done
+
+# --- T-FS-7: GET / renders 2 fake repos with KPI cells and /repo/<name> links ---
+_fs7_body="$(curl -s "http://127.0.0.1:${FS_CONTENT_PORT}/" 2>/dev/null || true)"
+check "T-FS-7a index HTTP 200" \
+  "[ \"$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FS_CONTENT_PORT}/" 2>/dev/null)\" = '200' ]"
+check "T-FS-7b index contains alpha-repo" \
+  "printf '%s' \"\$_fs7_body\" | grep -q 'alpha-repo'"
+check "T-FS-7c index contains beta-repo" \
+  "printf '%s' \"\$_fs7_body\" | grep -q 'beta-repo'"
+check "T-FS-7d index has link to /repo/alpha-repo" \
+  "printf '%s' \"\$_fs7_body\" | grep -q '/repo/alpha-repo'"
+check "T-FS-7e index has link to /repo/beta-repo" \
+  "printf '%s' \"\$_fs7_body\" | grep -q '/repo/beta-repo'"
+check "T-FS-7f index contains KPI table headers (Tokens)" \
+  "printf '%s' \"\$_fs7_body\" | grep -qi 'Tokens'"
+check "T-FS-7g index contains Open tasks column" \
+  "printf '%s' \"\$_fs7_body\" | grep -qi 'Open'"
+check "T-FS-7h index has massoh-generated sentinel" \
+  "printf '%s' \"\$_fs7_body\" | grep -q 'massoh-generated'"
+
+# --- T-FS-8: GET /repo/<known> renders KPI panel, board, task list ---
+_fs8_body="$(curl -s "http://127.0.0.1:${FS_CONTENT_PORT}/repo/alpha-repo" 2>/dev/null || true)"
+check "T-FS-8a /repo/alpha-repo returns HTTP 200" \
+  "[ \"$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FS_CONTENT_PORT}/repo/alpha-repo" 2>/dev/null)\" = '200' ]"
+check "T-FS-8b /repo/alpha-repo contains repo name in title" \
+  "printf '%s' \"\$_fs8_body\" | grep -q 'alpha-repo'"
+check "T-FS-8c /repo/alpha-repo contains breadcrumb link to /" \
+  "printf '%s' \"\$_fs8_body\" | grep -q 'href=\"/\"'"
+check "T-FS-8d /repo/alpha-repo contains KPI panel (kpi-panel class)" \
+  "printf '%s' \"\$_fs8_body\" | grep -q 'kpi-panel'"
+check "T-FS-8e /repo/alpha-repo contains board (board class)" \
+  "printf '%s' \"\$_fs8_body\" | grep -q 'class=\"board\"'"
+check "T-FS-8f /repo/alpha-repo contains task-list table" \
+  "printf '%s' \"\$_fs8_body\" | grep -q 'task-list'"
+check "T-FS-8g /repo/alpha-repo task list shows TASK-open-1" \
+  "printf '%s' \"\$_fs8_body\" | grep -q 'TASK-open-1'"
+check "T-FS-8h /repo/alpha-repo sibling nav links to beta-repo" \
+  "printf '%s' \"\$_fs8_body\" | grep -q '/repo/beta-repo'"
+check "T-FS-8i /repo/alpha-repo has massoh-generated sentinel" \
+  "printf '%s' \"\$_fs8_body\" | grep -q 'massoh-generated'"
+
+# --- T-FS-9: GET /repo/<unknown> → 404 ---
+_fs9_code="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${FS_CONTENT_PORT}/repo/nonexistent-repo" 2>/dev/null || echo 0)"
+check "T-FS-9 /repo/<unknown> → 404" "[ '$_fs9_code' = '404' ]"
+
+# --- T-FS-10: path traversal attempts → 404 (N2 set-membership guard) ---
+# %2F = '/', ..%2f..%2fetc is a common traversal attempt
+_fs10a_code="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${FS_CONTENT_PORT}/repo/..%2f..%2fetc" 2>/dev/null || echo 0)"
+check "T-FS-10a /repo/..%2f..%2fetc → 404 (encoded traversal)" "[ '$_fs10a_code' = '404' ]"
+
+_fs10b_code="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${FS_CONTENT_PORT}/repo/../../../etc" 2>/dev/null || echo 0)"
+check "T-FS-10b /repo/../../../etc → 404 (raw traversal)" "[ '$_fs10b_code' = '404' ]"
+
+_fs10c_code="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${FS_CONTENT_PORT}/repo/alpha-repo/../../etc" 2>/dev/null || echo 0)"
+check "T-FS-10c /repo/alpha-repo/../../etc → 404 (sub-path traversal)" "[ '$_fs10c_code' = '404' ]"
+
+# --- T-FS-11: HTML escape — <script> title → escaped in output (N4) ---
+# The XSS task title was seeded in FS_REPO_A above.
+# The fleet index should contain it escaped (as &lt;script&gt;), not raw.
+_fs11_index="$(curl -s "http://127.0.0.1:${FS_CONTENT_PORT}/" 2>/dev/null || true)"
+_fs11_repo="$(curl -s "http://127.0.0.1:${FS_CONTENT_PORT}/repo/alpha-repo" 2>/dev/null || true)"
+# Raw <script> tag must NOT appear in the HTML output
+check "T-FS-11a no raw <script> in fleet index (N4 escape)" \
+  "! printf '%s' \"\$_fs11_index\" | grep -F '<script>alert'"
+check "T-FS-11b no raw <script> in repo view (N4 escape)" \
+  "! printf '%s' \"\$_fs11_repo\" | grep -F '<script>alert'"
+# The escaped form must appear somewhere in the repo view (board or task list)
+check "T-FS-11c &lt;script&gt; appears escaped in repo view" \
+  "printf '%s' \"\$_fs11_repo\" | grep -qF '&lt;script&gt;'"
+
+# --- T-FS-12: read-only byte-snapshot — repos unchanged after full render ---
+# Take a filesystem snapshot of both fake repos BEFORE a full index + repo render.
+_fs12_before_a="$(cd "$FS_REPO_A" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+_fs12_before_b="$(cd "$FS_REPO_B" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+
+# Issue requests (the server already responded above, but do explicit fresh requests)
+curl -s "http://127.0.0.1:${FS_CONTENT_PORT}/" >/dev/null 2>&1 || true
+curl -s "http://127.0.0.1:${FS_CONTENT_PORT}/repo/alpha-repo" >/dev/null 2>&1 || true
+curl -s "http://127.0.0.1:${FS_CONTENT_PORT}/repo/beta-repo" >/dev/null 2>&1 || true
+
+# Give any async filesystem ops a moment (rendering is synchronous, but belt-and-suspenders)
+sleep 0.2
+
+_fs12_after_a="$(cd "$FS_REPO_A" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+_fs12_after_b="$(cd "$FS_REPO_B" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+
+check "T-FS-12a alpha-repo byte-snapshot unchanged after render (read-only)" \
+  "[ '$_fs12_before_a' = '$_fs12_after_a' ]"
+check "T-FS-12b beta-repo byte-snapshot unchanged after render (read-only)" \
+  "[ '$_fs12_before_b' = '$_fs12_after_b' ]"
+
+# --- T-FS-13: loopback-only still holds (N1) ---
+# Existing T-FS-3/T-FS-3b/T-FS-3c cover the skeleton; spot-check BIND_HOST in updated source.
+check "T-FS-13 BIND_HOST = 127.0.0.1 still in updated dashboard source (N1)" \
+  "grep -qE 'BIND_HOST = .127\\.0\\.0\\.1.' '$DASHBOARD'"
+
+# --- T-FS-14: no orphan content-server process (N3) ---
+kill "$FS_CONTENT_PID" 2>/dev/null || true
+_fs14_wait=0
+while kill -0 "$FS_CONTENT_PID" 2>/dev/null && [ $_fs14_wait -lt 30 ]; do
+  sleep 0.1; _fs14_wait=$((_fs14_wait+1))
+done
+check "T-FS-14 no orphan content-server process after SIGTERM (N3)" \
+  "! kill -0 '$FS_CONTENT_PID' 2>/dev/null"
+FS_CONTENT_PID=""
+
+fi  # end: python3 available guard (content tests)
+
 echo "== T-FS done =="
 
 echo
