@@ -3148,6 +3148,125 @@ DIVERGE_MARKER"
 check "T-DG-2 drift guard is non-vacuous (detects injected divergence)" \
   "! diff <(printf '%s\n' \"\$_dg_bin\") <(printf '%s\n' \"\$_dg_diverged\") >/dev/null 2>&1"
 
+# ===========================================================================
+# == T-FS: massoh fleet serve skeleton (slice 1a-0) =========================
+# ===========================================================================
+# N1  bind = 127.0.0.1 (hard-coded); never 0.0.0.0.
+# N2  route allowlist: GET / → 200 stub; any other path → 404.
+# N3  clean lifecycle: server starts, serves, stops — no orphan process.
+# N7  stdlib-only Python; python3-absent → graceful non-zero exit.
+echo "== T-FS: massoh fleet serve skeleton =="
+
+DASHBOARD="$REPO_ROOT/scripts/massoh-dashboard"
+
+# Helper: find a free ephemeral port (avoids CI collisions).
+# Tries to bind :0, reads the assigned port, closes immediately.
+_fs_free_port() {
+  python3 -c "
+import socket, sys
+s = socket.socket()
+s.bind(('127.0.0.1', 0))
+p = s.getsockname()[1]
+s.close()
+print(p)
+" 2>/dev/null || echo 0
+}
+
+FS_PORT="$(_fs_free_port)"
+FS_PID=""
+
+# Cleanup trap: kill the server and assert it is gone.
+_fs_cleanup() {
+  if [ -n "$FS_PID" ] && kill -0 "$FS_PID" 2>/dev/null; then
+    kill "$FS_PID" 2>/dev/null || true
+    # Give it up to 3 seconds to exit.
+    local i=0
+    while kill -0 "$FS_PID" 2>/dev/null && [ $i -lt 30 ]; do
+      sleep 0.1; i=$((i+1))
+    done
+  fi
+}
+trap '_fs_cleanup' EXIT
+
+# T-FS-0: python3 must be available for the rest of the T-FS suite.
+# If not, skip gracefully rather than leaving a broken pipe.
+if ! command -v python3 >/dev/null 2>&1; then
+  ok "T-FS-0 python3 absent — T-FS-1..5 skipped (covered by T-FS-5 below)"
+else
+
+# T-FS-1: server starts on a free port and curl / returns HTTP 200.
+FS_PID=""
+python3 "$DASHBOARD" --port "$FS_PORT" >/dev/null 2>&1 &
+FS_PID=$!
+# Wait up to 3 seconds for the server to be ready.
+_fs_wait=0
+until curl -s --connect-timeout 0.3 "http://127.0.0.1:${FS_PORT}/" >/dev/null 2>&1 || [ $_fs_wait -ge 30 ]; do
+  sleep 0.1; _fs_wait=$((_fs_wait+1))
+done
+_fs_http_code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FS_PORT}/" 2>/dev/null || echo 0)"
+check "T-FS-1 GET / returns HTTP 200" "[ '$_fs_http_code' = '200' ]"
+
+# T-FS-2: route allowlist — a bogus path returns 404.
+_fs_bogus_code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FS_PORT}/bogus/path" 2>/dev/null || echo 0)"
+check "T-FS-2 GET /bogus/path returns 404 (route allowlist)" "[ '$_fs_bogus_code' = '404' ]"
+
+# Additional path-traversal and encoded-path checks (N2).
+_fs_dotdot_code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FS_PORT}/../../etc/passwd" 2>/dev/null || echo 0)"
+check "T-FS-2b GET /../.. returns 404 (no path traversal)" "[ '$_fs_dotdot_code' = '404' ]"
+
+_fs_enc_code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${FS_PORT}/%2e%2e%2fetc" 2>/dev/null || echo 0)"
+check "T-FS-2c GET /%2e%2e%2f returns 404 (encoded traversal)" "[ '$_fs_enc_code' = '404' ]"
+
+# T-FS-3: loopback-only — assert the source hard-codes 127.0.0.1.
+# N1: BIND_HOST must be assigned "127.0.0.1" and TCPServer must use BIND_HOST,
+# never 0.0.0.0 or "" as the bind address literal.
+check "T-FS-3 BIND_HOST assigned 127.0.0.1 in source (N1)" \
+  "grep -qE 'BIND_HOST = .127\.0\.0\.1.' '$DASHBOARD'"
+
+# Assert 0.0.0.0 never appears as a bind-address literal in TCPServer calls.
+# (It may appear in comments/docs — the structural check is what matters.)
+check "T-FS-3b TCPServer not called with literal 0.0.0.0 in source (N1)" \
+  "! grep -qE 'TCPServer.*0\.0\.0\.0' '$DASHBOARD'"
+
+# Confirm BIND_HOST is the actual argument to TCPServer (belt-and-suspenders source check).
+check "T-FS-3c TCPServer called with BIND_HOST (not a hard-coded alternative)" \
+  "grep -q 'TCPServer.*BIND_HOST' '$DASHBOARD'"
+
+# T-FS-4: clean lifecycle — stop the server; no orphan process remains.
+kill "$FS_PID" 2>/dev/null || true
+_fs_orphan_wait=0
+while kill -0 "$FS_PID" 2>/dev/null && [ $_fs_orphan_wait -lt 30 ]; do
+  sleep 0.1; _fs_orphan_wait=$((_fs_orphan_wait+1))
+done
+check "T-FS-4 no orphan process after SIGTERM (N3 clean lifecycle)" \
+  "! kill -0 '$FS_PID' 2>/dev/null"
+FS_PID=""  # Cleared — cleanup trap is now a no-op for this PID.
+
+fi  # end: python3 available guard
+
+# T-FS-5: python3-absent guard — massoh fleet serve must fail gracefully with non-zero exit
+# when python3 is not on PATH. We create a temporary fake-python3 dir that shadows the real
+# one and provide a fake 'massoh' wrapper that runs fleet.sh with a PATH missing python3.
+FS_PID=""
+_fs5_dir="$TMP/nopy3"
+mkdir -p "$_fs5_dir"
+# Provide bash, env, and all standard coreutils via the real PATH — but NO python3.
+# We create a stub python3 that exits 127 (not-found) to simulate absence without
+# removing bash from PATH (which would prevent bin/massoh from running at all).
+printf '#!/usr/bin/env bash\necho "python3: command not found" >&2\nexit 127\n' > "$_fs5_dir/python3"
+chmod +x "$_fs5_dir/python3"
+_fs5_rc=0
+_fs5_out="$(PATH="$_fs5_dir:$PATH" "$MASSOH" fleet serve --port 19999 2>&1)" || _fs5_rc=$?
+check "T-FS-5 python3 absent → non-zero exit (N7 guard)" "[ $_fs5_rc -ne 0 ]"
+check "T-FS-5b python3 absent → message mentions python3" \
+  "echo '$_fs5_out' | grep -qi 'python3'"
+
+# T-FS-6: stdlib-only — no pip / no PyYAML import in massoh-dashboard.
+check "T-FS-6 massoh-dashboard imports stdlib only (no PyYAML, no pip)" \
+  "! grep -qE '^import yaml|^from yaml|^import PyYAML' '$DASHBOARD'"
+
+echo "== T-FS done =="
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]
