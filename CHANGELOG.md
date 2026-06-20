@@ -11,6 +11,29 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.23.0] - 2026-06-20
+
+### Added
+- **`massoh fleet learn` — cross-repo lesson candidate aggregation (slice 3):**
+  Reads `agent-project/LEARNINGS.proposed.md` and `META.proposed.md` from each
+  discovered repo (read-only, byte-snapshot safe), clusters lessons by recurrence,
+  and writes a consolidated `agent-project/FLEET_LEARNINGS.proposed.md` in THIS repo.
+  - ZERO LLM / ZERO network / ZERO spend (FLN1: static-grep clean — no claude/curl/wget/agent).
+  - Read-only on every discovered repo (FLN2): discovered-repo paths are never on
+    the LHS of any write operator; verified by byte-snapshot test T-FLN-2.
+  - Single named write variable `FLEET_LEARNINGS` with `# SAFETY` comment (FLN3).
+  - Promotion boundary: lessons seen in >= `FLEET_REPEAT_THRESHOLD` (=2) repos tagged
+    `[generalizable-candidate]`; single-repo lessons tagged `[project: <basename>]`.
+    Header: "CANDIDATES ONLY — engine adoption is a separate owner/gated step." (FLN4).
+  - Leak guard: structured fields only (no raw dump); source = basename not abs-path;
+    line cap 500 chars; local-only (FLN5).
+  - `set -euo pipefail` + `|| true` on all reads; per-repo degrade with `[skip]` (FLN6).
+  - Pattern A (sentinel-regenerate): two runs produce identical output; idempotent (FLN7).
+  - Sanitizes `|` and backticks in lesson text (FLN8).
+  - Threshold `FLEET_REPEAT_THRESHOLD=2` is a named constant (FLN8).
+  - 8 new tests T-FLN-1 through T-FLN-8; suite grows from 544 to 552+.
+  - `scripts/massoh-dashboard` untouched (browser learn-button PARKED per arch review).
+
 ## [0.22.0] - 2026-06-20
 
 ### Added

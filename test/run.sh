@@ -3710,6 +3710,246 @@ fi  # end: python3 available guard (start-task panel tests)
 
 echo "== T-FS done =="
 
+# ===========================================================================
+# T-FLN: massoh fleet learn — cross-repo lesson candidate aggregation (v0.23.0)
+# 8 tests: T-FLN-1 through T-FLN-8
+# FLN1–FLN8 conditions exercised per 03_slice3_architecture_safety.md
+# ===========================================================================
+echo "== T-FLN: massoh fleet learn (slice 3, v0.23.0) =="
+
+# Helper: create a minimal Massoh repo with a .massoh marker (no git needed for proposals)
+mkfleetrepo() {
+  local d="$1"
+  mkdir -p "$d/agent-project"
+  echo x > "$d/.massoh"
+}
+
+# Helper: write a LEARNINGS.proposed.md with given bullet lines
+# Usage: write_learnings <dir> "lesson1" "lesson2" ...
+# Note: use printf -- to avoid '-' in format string being parsed as an option flag
+write_learnings() {
+  local d="$1"; shift
+  mkdir -p "$d/agent-project"
+  printf '%s\n' '# LEARNINGS' '' '## [learn] block' > "$d/agent-project/LEARNINGS.proposed.md"
+  local l
+  for l in "$@"; do
+    printf -- '- %s\n' "$l" >> "$d/agent-project/LEARNINGS.proposed.md"
+  done
+}
+
+# Helper: create a temporary fleet root with given repos
+# Usage: mkfleetroot <dir> [repo1_name] [repo2_name] ...
+# Returns absolute paths; repos are under <dir>/
+mkfleetroot() {
+  local root="$1"; shift
+  mkdir -p "$root"
+  local rname
+  for rname in "$@"; do
+    mkfleetrepo "$root/$rname"
+  done
+}
+
+# ---- T-FLN-1: overlap → [generalizable-candidate]; single → [project: basename] ----
+FLN1_ROOT="$TMP/fln1_root"
+mkfleetroot "$FLN1_ROOT" alpha beta gamma
+# "shared lesson" appears in alpha + beta → should become [generalizable-candidate]
+write_learnings "$FLN1_ROOT/alpha" "shared lesson about guards" "alpha-only lesson"
+write_learnings "$FLN1_ROOT/beta"  "shared lesson about guards" "beta-only lesson"
+write_learnings "$FLN1_ROOT/gamma" "gamma-only lesson unique"
+
+# Run fleet learn with --write-proposals; capture stdout to a temp file to avoid quoting issues
+FLN1_STDOUT="$TMP/fln1_stdout.txt"
+MASSOH_FLEET_ROOT="$FLN1_ROOT" \
+  "$MASSOH" fleet learn --write-proposals >"$FLN1_STDOUT" 2>&1 || true
+
+# The write goes to this repo's agent-project/ — check stdout + file contain both tags
+FLEET_LEARN_FILE="$REPO_ROOT/agent-project/FLEET_LEARNINGS.proposed.md"
+check "T-FLN-1a overlap lesson tagged [generalizable-candidate] in stdout" \
+  "grep -q 'generalizable-candidate' '$FLN1_STDOUT'"
+check "T-FLN-1b single-repo lesson tagged [project:] in stdout" \
+  "grep -q 'project:' '$FLN1_STDOUT'"
+check "T-FLN-1c FLEET_LEARNINGS.proposed.md written" \
+  "[ -f '$FLEET_LEARN_FILE' ]"
+check "T-FLN-1d file contains CANDIDATES ONLY header" \
+  "grep -q 'CANDIDATES ONLY' '$FLEET_LEARN_FILE'"
+check "T-FLN-1e file contains generalizable-candidate" \
+  "grep -q 'generalizable-candidate' '$FLEET_LEARN_FILE'"
+check "T-FLN-1f file contains project: tag" \
+  "grep -q 'project:' '$FLEET_LEARN_FILE'"
+# Clean up written file for subsequent tests
+rm -f "$FLEET_LEARN_FILE"
+
+# ---- T-FLN-2: discovered-repo byte-snapshot unchanged after run ----
+FLN2_ROOT="$TMP/fln2_root"
+mkfleetroot "$FLN2_ROOT" repo-x repo-y
+write_learnings "$FLN2_ROOT/repo-x" "lesson from repo-x about testing"
+write_learnings "$FLN2_ROOT/repo-y" "lesson from repo-y about safety" "lesson from repo-x about testing"
+
+# Byte-snapshot before
+fln2_snap_x_before="$(find "$FLN2_ROOT/repo-x" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}')"
+fln2_snap_y_before="$(find "$FLN2_ROOT/repo-y" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}')"
+
+MASSOH_FLEET_ROOT="$FLN2_ROOT" "$MASSOH" fleet learn --write-proposals >/dev/null 2>&1 || true
+
+fln2_snap_x_after="$(find "$FLN2_ROOT/repo-x" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}')"
+fln2_snap_y_after="$(find "$FLN2_ROOT/repo-y" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}')"
+
+check "T-FLN-2a repo-x byte-snapshot unchanged (no writes to discovered repo)" \
+  "[ '$fln2_snap_x_before' = '$fln2_snap_x_after' ]"
+check "T-FLN-2b repo-y byte-snapshot unchanged (no writes to discovered repo)" \
+  "[ '$fln2_snap_y_before' = '$fln2_snap_y_after' ]"
+# clean up
+rm -f "$FLEET_LEARN_FILE"
+
+# ---- T-FLN-3: no-proposals repo → exit 0 + [skip] in output; no file created in that repo ----
+FLN3_ROOT="$TMP/fln3_root"
+mkfleetroot "$FLN3_ROOT" with-props no-props
+write_learnings "$FLN3_ROOT/with-props" "a lesson about something"
+# no-props: has .massoh but no LEARNINGS.proposed.md or META.proposed.md
+# (mkfleetrepo only creates agent-project/ dir, no files — that is fine)
+
+fln3_snap_noprops_before="$(find "$FLN3_ROOT/no-props" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}')"
+
+rc_fln3=0
+FLN3_STDOUT="$TMP/fln3_stdout.txt"
+MASSOH_FLEET_ROOT="$FLN3_ROOT" "$MASSOH" fleet learn --write-proposals >"$FLN3_STDOUT" 2>&1 || rc_fln3=$?
+
+check "T-FLN-3a no-proposals repo: exit 0" "[ $rc_fln3 -eq 0 ]"
+check "T-FLN-3b no-proposals repo: [skip] in output" \
+  "grep -qi 'skip' '$FLN3_STDOUT'"
+# verify no file was written into the no-props repo
+fln3_snap_noprops_after="$(find "$FLN3_ROOT/no-props" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}')"
+check "T-FLN-3c no-props repo directory untouched (byte-snapshot)" \
+  "[ '$fln3_snap_noprops_before' = '$fln3_snap_noprops_after' ]"
+rm -f "$FLEET_LEARN_FILE"
+
+# ---- T-FLN-4: engine files unchanged after fleet learn run (FLN4) ----
+# Strategy: snapshot md5sums of engine file trees BEFORE the run, run fleet learn,
+# then snapshot AFTER and compare.  This is runtime-proof independent of git index state.
+FLN4_ROOT="$TMP/fln4_root"
+mkdir -p "$FLN4_ROOT/eng-repo/agent-project"
+echo x > "$FLN4_ROOT/eng-repo/.massoh"
+printf '%s\n' '# LEARNINGS' '' '## [learn] block' \
+  > "$FLN4_ROOT/eng-repo/agent-project/LEARNINGS.proposed.md"
+printf -- '- %s\n' 'lesson about safety' \
+  >> "$FLN4_ROOT/eng-repo/agent-project/LEARNINGS.proposed.md"
+
+# Snapshot engine paths before run
+fln4_snap_before_verbs="$(find "$REPO_ROOT/lib/verbs" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}' || true)"
+fln4_snap_before_agtos="$(find "$REPO_ROOT/agent-os" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}' || true)"
+fln4_snap_before_bin="$(md5sum "$REPO_ROOT/bin/massoh" 2>/dev/null | awk '{print $1}' || true)"
+fln4_snap_before_manifest="$(md5sum "$REPO_ROOT/manifest.yml" 2>/dev/null | awk '{print $1}' || true)"
+fln4_snap_before_templates="$(find "$REPO_ROOT/templates" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}' || true)"
+# Byte-snapshot of discovered fake repo before run
+fln4_snap_before_fakerepo="$(find "$FLN4_ROOT/eng-repo" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}' || true)"
+
+MASSOH_FLEET_ROOT="$FLN4_ROOT" "$MASSOH" fleet learn --write-proposals >/dev/null 2>&1 || true
+
+# Snapshot engine paths after run
+fln4_snap_after_verbs="$(find "$REPO_ROOT/lib/verbs" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}' || true)"
+fln4_snap_after_agtos="$(find "$REPO_ROOT/agent-os" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}' || true)"
+fln4_snap_after_bin="$(md5sum "$REPO_ROOT/bin/massoh" 2>/dev/null | awk '{print $1}' || true)"
+fln4_snap_after_manifest="$(md5sum "$REPO_ROOT/manifest.yml" 2>/dev/null | awk '{print $1}' || true)"
+fln4_snap_after_templates="$(find "$REPO_ROOT/templates" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}' || true)"
+fln4_snap_after_fakerepo="$(find "$FLN4_ROOT/eng-repo" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}' || true)"
+
+check "T-FLN-4a lib/verbs/ unchanged after fleet learn run" \
+  "[ '$fln4_snap_before_verbs' = '$fln4_snap_after_verbs' ]"
+check "T-FLN-4b agent-os/ unchanged after fleet learn run" \
+  "[ '$fln4_snap_before_agtos' = '$fln4_snap_after_agtos' ]"
+check "T-FLN-4c bin/massoh unchanged after fleet learn run" \
+  "[ '$fln4_snap_before_bin' = '$fln4_snap_after_bin' ]"
+check "T-FLN-4d manifest.yml unchanged after fleet learn run" \
+  "[ '$fln4_snap_before_manifest' = '$fln4_snap_after_manifest' ]"
+check "T-FLN-4e templates/ unchanged after fleet learn run" \
+  "[ '$fln4_snap_before_templates' = '$fln4_snap_after_templates' ]"
+check "T-FLN-4f discovered fake repo byte-snapshot unchanged (no write to discovered repos)" \
+  "[ '$fln4_snap_before_fakerepo' = '$fln4_snap_after_fakerepo' ]"
+rm -f "$FLEET_LEARN_FILE"
+
+# ---- T-FLN-5: static grep — zero matches for claude/curl/wget/agent in cmd_fleet_learn ----
+# Extract the cmd_fleet_learn function body from fleet.sh and grep for banned identifiers.
+# Note: 'agent' in path components 'agent-project' and 'agent-os' is NOT a command invocation;
+# those are excluded from the agent-invocation check (grep -vE 'agent-project|agent-os').
+FLEET_SH="$REPO_ROOT/lib/verbs/fleet.sh"
+check "T-FLN-5a no \\bclaude\\b in cmd_fleet_learn (zero-LLM)" \
+  "! awk '/^cmd_fleet_learn\(\)/{f=1} f && /^\}$/{f=0; next} f' '$FLEET_SH' | grep -qwE 'claude'"
+check "T-FLN-5b no \\bcurl\\b in cmd_fleet_learn (zero-network)" \
+  "! awk '/^cmd_fleet_learn\(\)/{f=1} f && /^\}$/{f=0; next} f' '$FLEET_SH' | grep -qwE 'curl'"
+check "T-FLN-5c no \\bwget\\b in cmd_fleet_learn (zero-network)" \
+  "! awk '/^cmd_fleet_learn\(\)/{f=1} f && /^\}$/{f=0; next} f' '$FLEET_SH' | grep -qwE 'wget'"
+check "T-FLN-5d no agent-harness invocation in cmd_fleet_learn (agent-project/agent-os paths excluded)" \
+  "! awk '/^cmd_fleet_learn\(\)/{f=1} f && /^\}$/{f=0; next} f' '$FLEET_SH' | grep -vE 'agent-project|agent-os' | grep -qwE 'agent'"
+
+# ---- T-FLN-6: idempotent — two runs produce identical output file (Pattern A) ----
+FLN6_ROOT="$TMP/fln6_root"
+mkfleetroot "$FLN6_ROOT" r1 r2
+write_learnings "$FLN6_ROOT/r1" "idempotent test lesson about guards" "r1-only unique lesson"
+write_learnings "$FLN6_ROOT/r2" "idempotent test lesson about guards" "r2-only unique lesson"
+
+MASSOH_FLEET_ROOT="$FLN6_ROOT" "$MASSOH" fleet learn --write-proposals >/dev/null 2>&1 || true
+fln6_md5_run1="$(md5sum "$FLEET_LEARN_FILE" 2>/dev/null | awk '{print $1}' || true)"
+
+MASSOH_FLEET_ROOT="$FLN6_ROOT" "$MASSOH" fleet learn --write-proposals >/dev/null 2>&1 || true
+fln6_md5_run2="$(md5sum "$FLEET_LEARN_FILE" 2>/dev/null | awk '{print $1}' || true)"
+
+check "T-FLN-6a two runs produce identical md5 (Pattern A: sentinel-regenerate)" \
+  "[ '$fln6_md5_run1' = '$fln6_md5_run2' ]"
+check "T-FLN-6b idempotent run: file still has generalizable-candidate tag" \
+  "grep -q 'generalizable-candidate' '$FLEET_LEARN_FILE'"
+rm -f "$FLEET_LEARN_FILE"
+
+# ---- T-FLN-7: --no-write (default): FLEET_LEARNINGS.proposed.md NOT created/modified ----
+FLN7_ROOT="$TMP/fln7_root"
+mkfleetroot "$FLN7_ROOT" qa-repo
+write_learnings "$FLN7_ROOT/qa-repo" "a lesson that should not write file"
+
+# Ensure the output file does not exist before
+rm -f "$FLEET_LEARN_FILE"
+
+FLN7_STDOUT="$TMP/fln7_stdout.txt"
+MASSOH_FLEET_ROOT="$FLN7_ROOT" "$MASSOH" fleet learn >"$FLN7_STDOUT" 2>&1 || true
+
+check "T-FLN-7a default (no --write-proposals): FLEET_LEARNINGS.proposed.md NOT created" \
+  "[ ! -f '$FLEET_LEARN_FILE' ]"
+check "T-FLN-7b default: stdout still contains candidate summary" \
+  "grep -q 'massoh fleet learn' '$FLN7_STDOUT'"
+
+# --no-write also must not write
+rm -f "$FLEET_LEARN_FILE"
+MASSOH_FLEET_ROOT="$FLN7_ROOT" "$MASSOH" fleet learn --no-write >/dev/null 2>&1 || true
+check "T-FLN-7c --no-write: FLEET_LEARNINGS.proposed.md NOT created" \
+  "[ ! -f '$FLEET_LEARN_FILE' ]"
+
+# ---- T-FLN-8: pipe char and backticks in lesson text → valid markdown, no injection ----
+FLN8_ROOT="$TMP/fln8_root"
+mkfleetroot "$FLN8_ROOT" dirty-repo clean-repo
+# Write a lesson with pipe and backtick characters
+write_learnings "$FLN8_ROOT/dirty-repo" "lesson with | pipe and \`backtick\` chars | more pipes"
+write_learnings "$FLN8_ROOT/clean-repo" "lesson with | pipe and \`backtick\` chars | more pipes"
+
+MASSOH_FLEET_ROOT="$FLN8_ROOT" "$MASSOH" fleet learn --write-proposals >/dev/null 2>&1 || true
+
+check "T-FLN-8a output file exists after sanitized lesson run" \
+  "[ -f '$FLEET_LEARN_FILE' ]"
+# The raw pipe in table cells would break markdown; we assert no raw | in lesson text lines
+# (each bullet line in the file should have pipes replaced or absent in lesson portion)
+# Our sanitizer replaces | with space — check the file can be parsed line-by-line without |
+# The CANDIDATES ONLY header may contain dashes but no raw pipes in lesson bullet content.
+FLN8_LESSON_FILE="$TMP/fln8_lessons.txt"
+grep '^- \[' "$FLEET_LEARN_FILE" > "$FLN8_LESSON_FILE" 2>/dev/null || true
+check "T-FLN-8b lesson bullet lines do not contain raw | char (markdown-safe)" \
+  "! grep -qF '|' '$FLN8_LESSON_FILE'"
+# Check for backtick: compare file with backticks stripped; if equal, none were present
+check "T-FLN-8c lesson bullet lines do not contain raw backtick char" \
+  "[ \"\$(tr -d '\`' < '$FLN8_LESSON_FILE' 2>/dev/null)\" = \"\$(cat '$FLN8_LESSON_FILE' 2>/dev/null)\" ]"
+# The file must be non-empty and well-formed (header present)
+check "T-FLN-8d CANDIDATES ONLY header present in sanitized output" \
+  "grep -q 'CANDIDATES ONLY' '$FLEET_LEARN_FILE'"
+rm -f "$FLEET_LEARN_FILE"
+
+echo "== T-FLN done =="
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]
