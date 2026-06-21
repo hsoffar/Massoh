@@ -3,3 +3,6 @@
 *.tmp
 .DS_Store
 .agent_tasks/cron/cron.log
+
+# LibreOffice lock files
+.~lock.*#
