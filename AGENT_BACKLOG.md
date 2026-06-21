@@ -97,6 +97,6 @@ slices 2+), Fleet layer (slices 3–4: cross-repo lessons pool → engine self-c
 | 16 | P3 | Full bats port — migrate remaining test/run.sh sections to bats once test suite is split per-verb (deferred from #12) | TODO |
 | 17 | P0 | test/run.sh not parallel-safe — concurrent runs collide on shared $TMP/HOME/doctor-network state (2 spurious fails observed); isolate per-run tmp or document single-run-only | TODO |
 | 18 | P3 | T-FLN-6a idempotency test fragile — compares raw md5 of FLEET_LEARNINGS but file embeds a Generated: timestamp; compare with the Generated line stripped | TODO |
-| 19 | P3 | Dashboard repo/task routes 404 until restart — repo-name map built at server startup, but the index re-discovers per request; routes should rediscover per request (or document restart-after-fleet-conf | TODO |
-| 20 | P1 | Repo page task list doesn't link to the /repo/<name>/task/<id> drill-down — add hrefs so drill-down is clickable, not URL-only | TODO |
-| 21 | P3 | Dashboard test teardown uses broad pkill -f massoh-dashboard — kills a user's running dashboard during test runs; scope cleanup to the test's own PID/port | TODO |
+| 19 | P3 | Dashboard repo/task routes 404 until restart — repo-name map built at server startup, but the index re-discovers per request; routes should rediscover per request (or document restart-after-fleet-conf | **DONE** — v0.27.0 per-request rebuild via `_get_repo_name_map()` |
+| 20 | P1 | Repo page task list doesn't link to the /repo/<name>/task/<id> drill-down — add hrefs so drill-down is clickable, not URL-only | **DONE** — v0.27.0 `_fleet_render_task_list` adds `<a href=...>` |
+| 21 | P3 | Dashboard test teardown uses broad pkill -f massoh-dashboard — kills a user's running dashboard during test runs; scope cleanup to the test's own PID/port | **DONE** — v0.27.0 audited; T-FS-A3-4 static guard + T-FS-A3-5 sentinel test |

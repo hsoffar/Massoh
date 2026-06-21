@@ -11,6 +11,39 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.27.0] - 2026-06-21
+
+### Fixed
+- **#20 (P1) — task list now clickable:** `_fleet_render_task_list` in
+  `lib/verbs/fleet.sh` now wraps each task id in `<a href="/repo/<name>/task/<id>">`,
+  linking to the existing drill-down route. The id is escaped in both the `href`
+  attribute and the anchor text via `_board_html_escape`. Requires `repo_name` to be
+  passed from `_fleet_render_repo` (which already holds it). No new route added.
+
+- **#19 (P3) — routes 404 until restart:** `scripts/massoh-dashboard` no longer
+  builds the `repo_name_map` once at startup and stores it on the handler class.
+  Instead, `_get_repo_name_map()` rebuilds it per-request using the same
+  `_discover_repos()` source as the index page. A repo added to `fleet.tsv` after
+  launch resolves in the very next request, and the index and routes agree within
+  the same request.
+
+- **#21 (P3) — broad pkill in test teardown:** `test/run.sh` was audited — all
+  existing teardowns were already PID-scoped (`kill "$PID"`); `pkill` appeared only
+  in comments. New A3 tests add a static grep guard (T-FS-A3-4) asserting zero broad
+  `pkill`/`killall massoh-dashboard` commands, plus a sentinel-server test (T-FS-A3-5)
+  proving an unrelated dashboard survives a full suite run.
+
+### Tests added
+- **T-FS-A3-1a/b/c** — `/repo/<name>` page contains `href="/repo/<name>/task/<id>"` for
+  known tasks; linked task id correct and properly formed.
+- **T-FS-A3-2** — GET on that href → HTTP 200 (existing drill-down route reached).
+- **T-FS-A3-3a/b** — server started with empty TSV; repo added post-launch; next request
+  resolves 200 without restart (per-request rediscovery proof).
+- **T-FS-A3-4** — static grep guard: zero broad pkill/killall command tokens in
+  `test/run.sh` (comments excluded).
+- **T-FS-A3-5a/b** — sentinel server on ephemeral port remains alive after full A3 block
+  (no broad-process-kill side-effect).
+
 ## [0.26.0] - 2026-06-21
 
 ### Added

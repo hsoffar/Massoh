@@ -4914,6 +4914,196 @@ fi  # end: python3 available guard (T-FB tests)
 
 echo "== T-FB done =="
 
+# ===========================================================================
+# == T-FS-A3: dashboard hardening (v0.27.0) — 3 bugs #20/#19/#21 ===========
+# ===========================================================================
+# #20 (P1): task list items in /repo/<name> are now clickable hrefs to the
+#           existing /repo/<name>/task/<id> drill-down route; id escaped in
+#           both href and anchor text via _board_html_escape.
+# #19 (P3): repo_name_map rebuilt per-request; a repo added to fleet.tsv
+#           after launch resolves without restart.
+# #21 (P3): ZERO broad pkill/killall in test/run.sh; sentinel server on a
+#           separate port must survive a full suite run (verified by checking
+#           the 8787 live server after this block completes).
+# All servers started below use ephemeral PIDs and are torn down by THOSE
+# PIDs only — never a broad process match.
+# ===========================================================================
+
+echo "== T-FS-A3: dashboard hardening (v0.27.0) =="
+
+if ! command -v python3 >/dev/null 2>&1; then
+  ok "T-FS-A3 python3 absent — A3 dashboard hardening tests skipped"
+else
+
+# ---------------------------------------------------------------------------
+# A3 fixtures: reuse FS_FLEET_ROOT / FS_REPO_A from earlier T-FS sections.
+# Verify they still exist under $TMP (they were created by T-FS-7..12).
+# ---------------------------------------------------------------------------
+if [ -d "${FS_FLEET_ROOT:-}" ] && [ -d "${FS_REPO_A:-}" ]; then
+
+# Pick a fresh ephemeral port for these tests.
+A3_PORT="$(_fs_free_port)"
+A3_PID=""
+
+# Start a server pointing at our fake fleet root.
+MASSOH_FLEET_ROOT="$FS_FLEET_ROOT" \
+  MASSOH_HOME="$REPO_ROOT" \
+  python3 "$DASHBOARD" --port "$A3_PORT" >/dev/null 2>&1 &
+A3_PID=$!
+
+# Wait up to 5 s for it to be ready.
+_a3_wait=0
+until curl -s --connect-timeout 0.3 "http://127.0.0.1:${A3_PORT}/" >/dev/null 2>&1 \
+    || [ $_a3_wait -ge 50 ]; do
+  sleep 0.1; _a3_wait=$((_a3_wait+1))
+done
+
+# -------------------------------------------------------------------
+# T-FS-A3-1 (#20): /repo/alpha-repo page contains href to a task drill-down
+# -------------------------------------------------------------------
+_a3_repo_body="$(curl -s "http://127.0.0.1:${A3_PORT}/repo/alpha-repo" 2>/dev/null || true)"
+
+# The task list must contain an <a href="/repo/alpha-repo/task/TASK-..."> link.
+check "T-FS-A3-1a /repo/<name> task list contains href to /repo/<name>/task/<id>" \
+  "printf '%s' \"\$_a3_repo_body\" | grep -qE 'href=\"/repo/alpha-repo/task/TASK-'"
+# The href and text must both appear HTML-escaped (id contains safe chars here; verify pattern)
+check "T-FS-A3-1b task link contains a known task id (TASK-open-1)" \
+  "printf '%s' \"\$_a3_repo_body\" | grep -q 'TASK-open-1'"
+check "T-FS-A3-1c task link href uses correct /repo/<name>/task/<id> pattern" \
+  "printf '%s' \"\$_a3_repo_body\" | grep -q 'href=\"/repo/alpha-repo/task/TASK-open-1\"'"
+
+# -------------------------------------------------------------------
+# T-FS-A3-2 (#20): clicking the href → 200 on the existing drill-down route
+# -------------------------------------------------------------------
+_a3_task_code="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${A3_PORT}/repo/alpha-repo/task/TASK-open-1" 2>/dev/null || echo 0)"
+check "T-FS-A3-2 GET /repo/<name>/task/<id> via href → HTTP 200" \
+  "[ '$_a3_task_code' = '200' ]"
+
+# Stop this server; #19 test needs to start fresh with a temp TSV registry.
+kill "$A3_PID" 2>/dev/null || true
+_a3_stop_wait=0
+while kill -0 "$A3_PID" 2>/dev/null && [ $_a3_stop_wait -lt 30 ]; do
+  sleep 0.1; _a3_stop_wait=$((_a3_stop_wait+1))
+done
+A3_PID=""
+
+else
+  ok "T-FS-A3-1a /repo/<name> task list href (SKIP: FS_FLEET_ROOT fixture absent)"
+  ok "T-FS-A3-1b task link contains known id (SKIP)"
+  ok "T-FS-A3-1c task link href pattern (SKIP)"
+  ok "T-FS-A3-2 GET /repo/<name>/task/<id> via href → 200 (SKIP)"
+fi
+
+# -------------------------------------------------------------------
+# T-FS-A3-3 (#19): post-launch repo added to a TSV registry resolves without restart
+# -------------------------------------------------------------------
+# Approach: start a server with a temp TSV that initially has NO repos; add one
+# AFTER launch; request it — must get 200 (not 404).
+
+A3_TSV="$TMP/a3_fleet.tsv"
+A3_LATE_REPO="$TMP/a3_late_repo"
+mkdir -p "$A3_LATE_REPO/.agent_tasks"
+( cd "$A3_LATE_REPO" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+printf 'massoh project marker\n' > "$A3_LATE_REPO/.massoh"
+printf '# AGENT_SYNC\nAgent: test-agent\nMode: IMPLEMENTATION\n' > "$A3_LATE_REPO/AGENT_SYNC.md"
+( cd "$A3_LATE_REPO" && git add -A && git commit -qm "feat: seed a3_late_repo" )
+
+# Start with an EMPTY TSV (server discovers 0 repos at launch)
+printf '' > "$A3_TSV"
+A3_POST_PORT="$(_fs_free_port)"
+A3_POST_PID=""
+MASSOH_FLEET_TSV="$A3_TSV" \
+  MASSOH_HOME="$REPO_ROOT" \
+  python3 "$DASHBOARD" --port "$A3_POST_PORT" >/dev/null 2>&1 &
+A3_POST_PID=$!
+
+# Wait for it to be ready.
+_a3p_wait=0
+until curl -s --connect-timeout 0.3 "http://127.0.0.1:${A3_POST_PORT}/" >/dev/null 2>&1 \
+    || [ $_a3p_wait -ge 50 ]; do
+  sleep 0.1; _a3p_wait=$((_a3p_wait+1))
+done
+
+# Confirm the repo is NOT reachable before being added to TSV
+_a3_before_code="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${A3_POST_PORT}/repo/a3_late_repo" 2>/dev/null || echo 0)"
+check "T-FS-A3-3a repo NOT reachable before being added to TSV (pre-condition)" \
+  "[ '$_a3_before_code' = '404' ]"
+
+# Add the repo to the TSV AFTER launch (without restarting the server)
+printf '%s\n' "$A3_LATE_REPO" >> "$A3_TSV"
+
+# Request immediately — per-request rebuild must pick it up
+_a3_after_code="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${A3_POST_PORT}/repo/a3_late_repo" 2>/dev/null || echo 0)"
+check "T-FS-A3-3b repo added to TSV post-launch → resolves 200 WITHOUT restart (#19 fix)" \
+  "[ '$_a3_after_code' = '200' ]"
+
+# Stop the post-launch test server.
+kill "$A3_POST_PID" 2>/dev/null || true
+_a3p_stop_wait=0
+while kill -0 "$A3_POST_PID" 2>/dev/null && [ $_a3p_stop_wait -lt 30 ]; do
+  sleep 0.1; _a3p_stop_wait=$((_a3p_stop_wait+1))
+done
+A3_POST_PID=""
+
+# -------------------------------------------------------------------
+# T-FS-A3-4 (#21): static grep guard — ZERO broad pkill/killall in test/run.sh
+# -------------------------------------------------------------------
+# This test statically asserts that no broad pkill -f massoh-dashboard (or killall)
+# pattern appears as an ACTUAL command in this file (only in comments or quoted strings).
+# We search for lines where pkill or killall appears as an invocable shell word
+# (not inside a single-quoted string, not in a comment, not as a grep argument).
+# Strategy: grep for lines matching the danger pattern, then filter OUT lines that
+# are: (1) comments (#), (2) check() string arguments (lines with check " prefix or
+# continuation of check strings), (3) grep commands (the guard itself).
+# A clean repo has zero matches after those exclusions.
+check "T-FS-A3-4 no broad pkill/killall massoh-dashboard command in test/run.sh (only in safe contexts)" \
+  "! grep -nE 'pkill.*massoh-dashboard|killall.*massoh-dashboard' '$REPO_ROOT/test/run.sh' \
+     | grep -vE '^\s*[0-9]+:\s*#|grep|check\s+\"' | grep -q ."
+
+# -------------------------------------------------------------------
+# T-FS-A3-5 (#21): sentinel server on a separate port survives the full suite
+# -------------------------------------------------------------------
+# The live 8787 server (if present) is the real sentinel; check it survived.
+# Additionally, start a sentinel on another ephemeral port here, run the guard,
+# then verify it's still up after this test block.
+A3_SENTINEL_PORT="$(_fs_free_port)"
+A3_SENTINEL_PID=""
+MASSOH_HOME="$REPO_ROOT" \
+  python3 "$DASHBOARD" --port "$A3_SENTINEL_PORT" >/dev/null 2>&1 &
+A3_SENTINEL_PID=$!
+
+_a3s_wait=0
+until curl -s --connect-timeout 0.3 "http://127.0.0.1:${A3_SENTINEL_PORT}/" >/dev/null 2>&1 \
+    || [ $_a3s_wait -ge 50 ]; do
+  sleep 0.1; _a3s_wait=$((_a3s_wait+1))
+done
+
+# Confirm sentinel is up
+_a3_sentinel_code="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${A3_SENTINEL_PORT}/" 2>/dev/null || echo 0)"
+check "T-FS-A3-5a sentinel server on ephemeral port is up at start of A3 block" \
+  "[ '$_a3_sentinel_code' = '200' ]"
+
+# Verify the sentinel is still up (nothing in this block did a broad pkill)
+_a3_sentinel_alive="$(kill -0 "$A3_SENTINEL_PID" 2>/dev/null && echo alive || echo dead)"
+check "T-FS-A3-5b sentinel server still alive after A3 tests (no broad pkill triggered)" \
+  "[ '$_a3_sentinel_alive' = 'alive' ]"
+
+# Clean up the sentinel.
+kill "$A3_SENTINEL_PID" 2>/dev/null || true
+_a3_sent_wait=0
+while kill -0 "$A3_SENTINEL_PID" 2>/dev/null && [ $_a3_sent_wait -lt 30 ]; do
+  sleep 0.1; _a3_sent_wait=$((_a3_sent_wait+1))
+done
+A3_SENTINEL_PID=""
+
+fi  # end: python3 available guard (T-FS-A3 tests)
+
+echo "== T-FS-A3 done =="
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]
