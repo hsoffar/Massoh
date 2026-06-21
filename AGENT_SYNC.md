@@ -4,7 +4,7 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-20 (**FLEET OBSERVABILITY PLATFORM COMPLETE** — 8h away-autonomy. All slices shipped: 0 ledger · 1a-0 serve · 1a index+KPI+nav · 1b task drill-down · 1c start-task panel · 3 `fleet learn` candidates. PRs #31–#35, **v0.23.0**, suite 574 green. `massoh fleet serve` = loopback/read-only observability dashboard. **PARKED FOR OWNER:** live POST start-task submit, browser learn-button, engine adoption of FLEET_LEARNINGS candidates, engine-extraction #2. [Earlier: 24h queue 12 features v0.9→v0.19 + follow-ups.])
+Last updated: 2026-06-21 (Control plane — v0.23.0 deployed globally; dashboard live (Massoh+elard). **Track A:** A1 ops panels (queue/cron/workflow) MERGED PR #36 **v0.24.0**, suite 597. **Track B:** architect designed auth model; **owner SIGNATURE #1** ✓ → building **B0 intake button** (auth-gated POST→intake, --control default OFF). Tiers b/c (hooks/personality/restart/update) each need own sign-off. [Earlier: observability v0.20–0.23 PRs #31–#35; 24h queue v0.9–0.19.])
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
@@ -115,6 +115,11 @@ auto-promotes). PRs #31–#35, v0.23.0, suite 574 green; loopback/read-only/zero
 | 2026-06-20 | Fleet **slice 1a-0 (serve skeleton): APPROVE** — N1–N7 all independently verified (file:line refs in 06_slice-1a0_review.md); loopback-only reproduced live (127.0.0.1:34217, traversal→404, no-orphan PID confirmed); 476/476 green (self-witnessed, exit 0); scope: 3 files only (scripts/massoh-dashboard new, lib/verbs/fleet.sh additive, test/run.sh additive); bin/massoh/manifest.yml/safety-critical files diff=0; NB-1 T-FS-6 stdlib check partial (non-blocking); NB-2 allow_reuse_address class-level redundant (non-blocking). Ready to merge. | reviewer-qa |
 | 2026-06-20 | Fleet **slice 1a (dashboard content): APPROVE** — N1–N7/FL1 all independently verified (file:line refs in 06_slice-1a_review.md); traversal→404 reproduced (regex rejects % at char-class level; `repo_name` never os.path.join'd); XSS escape reproduced (no raw `<script>alert` in output; `&lt;script&gt;` confirmed); read-only reproduced (byte-snapshot alpha+beta repos identical before/after 3 renders); POST→404 reproduced; no orphan process; 504/504 green (self-witnessed, exit 0); scope: 6 files (lib/verbs/fleet.sh additive, scripts/massoh-dashboard extended, test/run.sh +28 T-FS-7..14, VERSION, CHANGELOG, AGENT_SYNC); bin/massoh/manifest.yml/safety-critical files diff=0; NB-1 unused shutil import; NB-2 inline urllib.parse import; NB-3 header title not self-escaping (all non-blocking). Ready to merge. | reviewer-qa |
 | 2026-06-20 | Fleet **slice 1b (task drill-down): APPROVE** — N1–N7/FL1 all independently verified (file:line refs in 06_slice-1b_review.md); double-404 reproduced live (known/known→200; known/unknown-task→404; unknown-repo/x→404; ..%2f..→404; ../../etc→404); XSS escape reproduced (no raw `<script>alert`; `&lt;script&gt;` confirmed); no-full-body reproduced (15-line file: Line 10./Line 15. absent; first-line label present); read-only reproduced (byte-snapshot identical before/after 3 renders); POST→404; no orphan server; 528/528 green (self-witnessed twice); scope: 5 files (lib/verbs/fleet.sh additive `_fleet_render_task`, scripts/massoh-dashboard extended route+handler, test/run.sh +T-FS-15..24, VERSION, CHANGELOG); bin/massoh/manifest.yml/safety-critical files diff=0; NB-1 shutil unused (pre-existing, non-blocking); NB-2 T-FS-22 static-source checks (non-blocking; live checks in T-FS-15..18). Ready to merge. | reviewer-qa |
+| 2026-06-21 | TASK-2026-06-21-control-plane (track B = write/exec control plane): system-architect **APPROVED-TO-DESIGN; design complete** (`.agent_tasks/TASK-2026-06-21-control-plane/01_B_design.md`). **AUTH model** = per-run CSPRNG capability token (memory-only, terminal-printed once, never on disk) + same-origin (Origin/Referer fail-closed) + hidden-field token on every write POST (constant-time compare, body field + header); closes the CSRF/drive-by-on-loopback risk (R4) with two independent locks (SOP read-block + unforgeable Origin); stdlib-only, no cookies/password store. **Risk tiers:** (a) append-only write (intake/tickets) — token+same-origin sufficient, one class sign-off; (b) safety-critical-file edit (agent-personality, hooks) — PROPOSE-ONLY *.proposed drafts, never live web-overwrite, FRESH per-sub-action sign-off + confirm; (c) exec (restart, update) — confirm + FRESH per-action sign-off + audit, update also needs NON_NEGOTIABLES §6 sign-off. **Intake-button pilot** is cleanly buildable under the auth model (reuses cmd_intake IK1–IK11 append-only + tested; argv-not-shell; server-side repo index; `--control` opt-in default OFF/flag-dark; no safety-critical file edited); 12 tests B-PILOT-1..12 + 7 conditions B1–B7 specified. **Audit:** `~/.claude/massoh/control-audit.log`, append-only, one line/attempt incl. denials, who=local single-user, token never logged. **The 8h away-grant does NOT cover B** — write/exec on the loopback surface IS the parked new safety-critical risk class. **AWAITING OWNER SIGN-OFF:** signature #1 on (this design + auth model) unlocks the B0 pilot to impl; B1 marginal; B2/B3/B4/B5 each a separate fresh sign-off; B5 also NON_NEGOTIABLES §6. Nothing in B ships before signature #1. | system-architect |
+
+| 2026-06-21 | Control plane: **deployed v0.23.0 to ~/.claude** (`massoh install`, backed up); `massoh` on PATH; dashboard live at 127.0.0.1:8787; **elard added** to `~/.claude/massoh/fleet.tsv` (Massoh + elard). | owner |
+| 2026-06-21 | Control plane **track B: architect designed auth model** (per-run capability token in-memory + same-origin Origin/Referer, two-lock fail-closed; risk tiers a/b/c; audit log) → `01_B_design.md`. **Owner SIGNATURE #1** — signed off on the auth model + authorized building B0 (intake button, tier-a append-only, --control default OFF). Tiers b/c each need fresh per-action sign-off. | owner |
+| 2026-06-21 | Control plane **track A: A1 ops panels** (queue/tickets + cron-read-only + workflow) MERGED PR #36 → v0.24.0; reviewer-qa APPROVE; 597 green; GET-only/read-only/escaped. | owner |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -149,51 +154,55 @@ None.
 | TASK-2026-06-20-fleet-observability slice 1b | 06_review_result | APPROVE — N1–N7/FL1 verified; 528/528 green; double-404+escape+no-full-body+read-only independently reproduced; scope clean. Ready to merge. |
 | TASK-2026-06-20-fleet-observability slice 1c | 06_review_result | APPROVE — all conditions verified; POST→404 reproduced live (3 routes); panel escaped (&amp;&amp; present, no raw &lt;script&gt;); read-only (byte-snapshot REPO_A+B identical); 544/544 green; scope 4 files; bin/massoh+manifest diff=0; POST PARK holds (server file unmodified). Ready to merge. |
 | TASK-2026-06-20-fleet-observability slice 3 | 06_review_result | APPROVE — FLN1–FLN8 all independently verified; 574/574 green (independently run); engine-untouched (git diff empty on agent-os/bin/massoh/manifest.yml/templates/scripts/massoh-dashboard); zero-LLM (static grep clean); candidates-only header present; read-only on discovered repos (live byte-snapshot identical); promotion boundary reproduced live ([generalizable-candidate] at >=2 repos, [project:basename] at 1 repo); NB-1 T-FLN-6a timestamp fragility (non-blocking, disclosed by implementer); NB-2 awk ordering (non-blocking); no blockers. Ready to merge. |
+| TASK-2026-06-21-control-plane slice A1 | 06_review_result | APPROVE — all conditions verified (file:line refs in 06_A1_review.md); cron read-only confirmed (zero mutation commands in _fleet_render_cron_panel body; T-FS-33e static check); N4 escape confirmed (live XSS: raw `<script>` absent, `&lt;script&gt;` present; 9 escape call sites); read-only confirmed (byte-snapshot identical before/after; T-FS-36); POST→404 confirmed (T-FS-38a/b + live HTTP 404); no orphan server (T-FS-37); 597/597 green (independently run; T-FLN-6a pre-existing flake non-blocking); scope clean — 5 files (lib/verbs/fleet.sh +272, test/run.sh +167, VERSION, CHANGELOG, AGENT_SYNC rolling); bin/massoh+manifest.yml+templates diff=0; AGENT_BACKLOG.md absent from diff; NB-1 T-FS-33c broad digit match (non-blocking); NB-2 workflow done-signal assumes 06_review_result.md name (consistent with codebase, non-blocking). Ready to merge. |
 
 ## Last handoff
 ```
 Agent: massoh-reviewer-qa
 Mode: REVIEW_QA
-Task: TASK-2026-06-20-fleet-observability — slice 3 (massoh fleet learn)
-Status: APPROVE. 06_slice3_review.md written.
-Branch: feat/fleet-learn (uncommitted)
+Task: TASK-2026-06-21-control-plane — slice A1 (ops read panels)
+Status: APPROVE. 06_A1_review.md written.
+Branch: feat/fleet-ops (uncommitted)
 
-Decision: APPROVE. All FLN1–FLN8 independently verified. 574/574 green.
+Decision: APPROVE. All mandatory conditions independently verified. 597/597 green.
 
-  FLN4 (promotion boundary — highest priority):
-    Live run: 3-repo fleet → [generalizable-candidate] at repos=2, [project:gamma] at repos=1.
-    Written file header: "CANDIDATES ONLY — engine adoption is a separate owner/gated step."
-    git diff HEAD -- agent-os/ bin/massoh manifest.yml templates/ scripts/massoh-dashboard → EMPTY.
-    T-FLN-4a–f all green. One write statement in cmd_fleet_learn (line 1151 → $FLEET_LEARNINGS).
-    No auto-promote-to-engine path exists.
+  Cron read-only (key safety):
+    _fleet_render_cron_panel body (fleet.sh:529–573) enumerated exhaustively.
+    All 3 "crontab"/"cron install" references are comments or a static printf display string.
+    Zero subprocess calls, zero backticks, zero $() enclosing a cron command.
+    grep -En 'crontab|cron install|cron on|cron off' lib/verbs/fleet.sh → comments + display string only.
+    T-FS-33e static awk check: PASS.
 
-  FLN1 (zero-LLM/spend):
-    Static grep: no claude/curl/wget/agent in cmd_fleet_learn body. T-FLN-5a/b/c/d green.
+  N4 escape:
+    9 _board_html_escape call sites confirmed (6 queue, 3 cron, 3 workflow).
+    Live XSS reproduction: <script>alert("xss")</script> in intake backlog →
+      raw <script> count: 0; &lt;script&gt; count: 1.
+    T-FS-32a/b: PASS.
 
-  FLN2 (read-only on discovered repos):
-    Live byte-snapshot: repo-x md5 identical before/after, repo-y md5 identical before/after.
-    T-FLN-2a/b green.
+  Read-only:
+    Byte-snapshot before=after (md5sum fbaa473030... identical).
+    T-FS-36: PASS. Three panel functions contain zero write operators on any repo path.
 
-  FLN3 (single named write var + SAFETY):
-    fleet.sh:923 FLEET_LEARNINGS declaration + SAFETY comment.
-    fleet.sh:1151 sole write operator. Confirmed exhaustive grep.
+  POST → 404:
+    Live: POST /repo/<name> HTTP 404.
+    T-FS-38a (POST /) → 404; T-FS-38b (POST /repo/alpha-repo) → 404.
+    scripts/massoh-dashboard diff=0; do_POST handler unchanged.
 
-  FLN5 (leak guard): basename only (no abs-path), head -c 500 caps, no raw dump. PASS.
-  FLN6 (|| true + degrade): set -euo pipefail line 918; per-repo [skip] degrade reproduced live.
-  FLN7 (idempotent): Pattern A sentinel-regenerate. No duplicate entries. See NB-1.
-  FLN8 (sanitize + named constant): | → space, backtick → ', FLEET_REPEAT_THRESHOLD=2.
+  No orphan server: T-FS-37 PASS. Post-run ps check: no orphan process.
 
-  Scope: 5 files (lib/verbs/fleet.sh +cmd_fleet_learn, test/run.sh +T-FLN-1..8 (30 assertions),
-    VERSION 0.23.0, CHANGELOG [0.23.0], AGENT_SYNC.md rolling update).
-    scripts/massoh-dashboard diff=0. bin/massoh diff=0. manifest.yml diff=0.
+  Scope: 5 files (lib/verbs/fleet.sh +272, test/run.sh +167 T-FS-30..38,
+    VERSION 0.24.0, CHANGELOG [0.24.0], AGENT_SYNC.md rolling update).
+    bin/massoh diff=0. manifest.yml diff=0. templates diff=0.
+    AGENT_BACKLOG.md absent from diff. scripts/massoh-dashboard diff=0.
 
-  NB-1: T-FLN-6a timestamp-dependent (two runs must land within same second for identical md5).
-         Disclosed by implementer. Product correct (no duplication). Non-blocking.
-  NB-2: awk ordering non-deterministic for same-count lessons. Non-blocking (human review).
+  Test count: 597/597 green.
+  T-FLN-6a: pre-existing timestamp flake (inbox #18). Non-blocking.
+  NB-1: T-FS-33c broad digit match (non-blocking).
+  NB-2: workflow done-signal assumes 06_review_result.md (consistent, non-blocking).
 
 Next recommended agent: orchestrator / auto-merge on green (per policy).
-Next action: Commit feat/fleet-learn, squash-merge PR -> main (VERSION 0.23.0).
-             PARK for owner: browser learn-button (POST) + engine ADOPTION of any candidate.
+Next action: Commit feat/fleet-ops, squash-merge PR → main (VERSION 0.24.0).
+             Track B (write/exec control plane) awaits owner sign-off on auth design.
 ```
 
 ## [meta-engineer] 2026-06-19 — RMT proposal (TASK-2026-06-19-rmt)

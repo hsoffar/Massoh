@@ -99,3 +99,4 @@ slices 2+), Fleet layer (slices 3–4: cross-repo lessons pool → engine self-c
 | 18 | P3 | T-FLN-6a idempotency test fragile — compares raw md5 of FLEET_LEARNINGS but file embeds a Generated: timestamp; compare with the Generated line stripped | TODO |
 | 19 | P3 | Dashboard repo/task routes 404 until restart — repo-name map built at server startup, but the index re-discovers per request; routes should rediscover per request (or document restart-after-fleet-conf | TODO |
 | 20 | P1 | Repo page task list doesn't link to the /repo/<name>/task/<id> drill-down — add hrefs so drill-down is clickable, not URL-only | TODO |
+| 21 | P3 | Dashboard test teardown uses broad pkill -f massoh-dashboard — kills a user's running dashboard during test runs; scope cleanup to the test's own PID/port | TODO |

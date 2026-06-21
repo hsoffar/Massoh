@@ -7,3 +7,4 @@
 - [intake: T-FLN-6a idempotency test fragile — compares raw md5 of FLEE](2026-06-20T19:13:05Z)
 - [intake: Dashboard repo/task routes 404 until restart — repo-name map](2026-06-21T09:06:53Z)
 - [intake: Repo page task list doesn't link to the /repo/<name>/task/<i](2026-06-21T09:06:53Z)
+- [intake: Dashboard test teardown uses broad pkill -f massoh-dashboard](2026-06-21T10:00:03Z)
