@@ -5,3 +5,5 @@
 - [intake: Full bats port — migrate remaining test/run.sh sections to b](2026-06-19T18:53:43Z)
 - [intake: test/run.sh not parallel-safe — concurrent runs collide on s](2026-06-19T22:07:01Z)
 - [intake: T-FLN-6a idempotency test fragile — compares raw md5 of FLEE](2026-06-20T19:13:05Z)
+- [intake: Dashboard repo/task routes 404 until restart — repo-name map](2026-06-21T09:06:53Z)
+- [intake: Repo page task list doesn't link to the /repo/<name>/task/<i](2026-06-21T09:06:53Z)
