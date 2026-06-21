@@ -4,34 +4,37 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-21 (Control plane — **A3 dashboard hardening APPROVED** (branch `feat/fleet-hardening` v0.27.0): task-list hrefs clickable (#20), per-request repo map (#19), no-broad-pkill guard (#21). Suite 685/685 green (independently run by reviewer). 8787 server survived. No-path-from-URL invariant confirmed after per-request refactor. Ready to auto-merge. [Earlier: A2 file browser MERGED PR #40 v0.26.0; B0 intake button MERGED PR #37 v0.25.0; A1 ops panels PR #36 v0.24.0.])
+Last updated: 2026-06-21 (Control plane — **read-only surface COMPLETE + hardened; dashboard LIVE on v0.27.0** at 127.0.0.1:8787 with `--control` (Massoh+elard): KPI/ops panels + task drill-down + **file browser** + auth-gated **intake button**. A3 hardening MERGED PR #42 v0.27.0 (clickable task links #20, per-request repo map #19, no-broad-pkill #21); suite 685 green. Remaining: tiers b/c (write/exec) need owner sign-off. [Earlier: A2 file browser PR #40 v0.26.0; B0 intake PR #37 v0.25.0; A1 ops panels PR #36 v0.24.0.])
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**A3 dashboard hardening APPROVED (branch `feat/fleet-hardening`, commit `96c8ff6`); ready to auto-merge.**
-The fleet dashboard at **http://127.0.0.1:8787/** (Massoh + elard) now has the full read surface +
-the one authorized write:
-- **Read (Track A):** fleet KPI index + per-repo views (queue/cron/workflow panels), task drill-down,
-  **file browser** (`/repo/<name>/files` grouped list + `/repo/<name>/file/<id>` read-only escaped
-  view — no-path-from-URL, opaque-id, 256 KiB cap, secrets/binaries/symlinks unreachable),
-  `massoh fleet learn` cross-repo lesson **candidates** (never auto-promotes).
+**None active — Control plane read-only surface COMPLETE + hardened; dashboard live on v0.27.0.**
+The fleet dashboard at **http://127.0.0.1:8787/** (Massoh + elard) has the full read surface + the one
+authorized write, all live-verified on v0.27.0:
+- **Read (Track A):** fleet KPI index + per-repo views (queue/cron/workflow panels) + task drill-down
+  (now **clickable** from the repo page) + **file browser** (`/repo/<name>/files` grouped list +
+  `/repo/<name>/file/<id>` read-only escaped view — no-path-from-URL, opaque-id, 256 KiB cap,
+  secrets/binaries/symlinks unreachable) + `massoh fleet learn` cross-repo lesson **candidates**.
+  Repo map rebuilt **per request** (new repos resolve without restart).
 - **Write (Track B, opt-in OFF):** the auth-gated **"Add idea"** intake form (two-lock fail-closed:
   same-origin + per-run capability token; append-only; audited) — only with `massoh fleet serve --control`.
-v0.26.0, suite 676 green. Loopback-only / read-only-except-intake throughout.
+v0.27.0, suite 685 green. Loopback-only / read-only-except-intake throughout.
 
-**PARKED FOR OWNER (need your decision/sign-off):**
-1. Track A polish: **A3** tickets/issues view + nav polish (optional; read-only, would ship under grant).
-2. Track B **tier b** — change agent personality + add hooks (PROPOSE-ONLY `*.proposed` drafts; fresh sign-off each).
-3. Track B **tier c** — server restart + `massoh update` from the browser (EXEC; confirm + fresh sign-off; §6 for update).
-4. Browser **"update master learning"** button (POST → fleet learn); **engine adoption** of any
+**PARKED FOR OWNER (need your decision/sign-off — these are the only remaining items):**
+1. Track B **tier b** — change agent personality + add hooks (PROPOSE-ONLY `*.proposed` drafts; fresh sign-off each).
+2. Track B **tier c** — server restart + `massoh update` from the browser (EXEC; confirm + fresh sign-off; §6 for update).
+3. Browser **"update master learning"** button (POST → fleet learn); **engine adoption** of any
    `FLEET_LEARNINGS.proposed.md` candidate (gated; never auto).
-5. **Engine-extraction (#2)** — split the engine into its own repo (deferred by owner).
-6. Owner-optional: **deploy** v0.26.0 to `~/.claude` via `massoh update` (currently ~/.claude is v0.23.0).
+4. **Engine-extraction (#2)** — split the engine into its own repo (deferred by owner).
+5. Owner-optional: **deploy** v0.27.0 to `~/.claude` via `massoh update` (currently ~/.claude is v0.23.0).
+6. Open inbox follow-ups (no owner action needed; pick up anytime): #17 P0 test parallel-safety;
+   #22 P3 per-request-discovery 3×/GET; #14/#16/#18 P3.
 
-**Last shipped:** Control plane A3 dashboard hardening — task-list hrefs + per-request map + no-broad-pkill. **Branch `feat/fleet-hardening`, VERSION 0.27.0**, suite 685 green. Handoff at `.agent_tasks/TASK-2026-06-21-control-plane/05_A3_handoff.md`.
+**Last shipped:** Control plane A3 dashboard hardening (#19/#20/#21). **Merged PR #42, VERSION 0.27.0**, suite 685 green.
+(This session: A1 #36 v0.24.0 → B0 #37 v0.25.0 → A2 #40 v0.26.0 → A3 #42 v0.27.0; +cleanup #38, syncs #39/#41.)
 (Earlier: A2 file browser Merged PR #40 v0.26.0; B0 intake button PR #37 v0.25.0; A1 ops panels PR #36 v0.24.0.)
 
 ## Open questions (owner decision needed)
@@ -135,6 +138,7 @@ v0.26.0, suite 676 green. Loopback-only / read-only-except-intake throughout.
 | 2026-06-21 | Control plane **A2 file browser: APPROVE** — all conditions verified (06_A2_review.md); no-path-from-URL structurally proved (file_id dict-key only, abs_path from server-built map) + live reproduced (7 traversal attacks → 404 on ephemeral port 34948); secret/symlink/dotfile unreachable at enumeration (would-be ids → 404); 256 KiB cap + truncation notice reproduced; XSS escaped (raw script absent, &lt;script&gt; in &lt;pre&gt;); POST→404; byte-snapshot identical; PID 4291 (live 8787 dashboard) untouched throughout; 676/676 green (self-run); bin/massoh+manifest+safety-critical diff=0; NB-1 T-FB-12b static source (non-blocking); NB-2 symlink dual-exclusion defense-in-depth (non-blocking). Ready to merge. | reviewer-qa |
 | 2026-06-21 | Control plane **A2 file browser: MERGED PR #40 → main `a868524`, VERSION 0.26.0** (squash). `GET /repo/<name>/files` (grouped list) + `GET /repo/<name>/file/<id>` (read-only escaped view) live. Dashboard **restarted on v0.26.0 with `--control`** (PID-scoped kill of old 8787, no broad pkill) at 127.0.0.1:8787. Smoke-verified live: files list 200 (176 files on Massoh), known id → 200 (escaped `<pre>`), traversal/non-hex/unknown ids → 404, elard files list 200, intake form intact, unauth POST → 403. Last big read-only control-plane piece shipped. | owner |
 | 2026-06-21 | Control plane **A3 dashboard hardening: APPROVE** — #20 clickable task hrefs (href+200 reproduced live); #19 per-request rediscovery (post-launch repo 404→200 reproduced, no restart); #21 no-broad-pkill (zero executable matches, sentinel survived); no-path-from-URL STILL HOLDS after per-request refactor (7 traversal attacks → 404); 685/685 green (independently run); 8787 survived; scope clean; bin/massoh+manifest diff=0; AGENT_BACKLOG #19/#20/#21 DONE (Status cell only). Ready to auto-merge. | reviewer-qa |
+| 2026-06-21 | Control plane **A3 dashboard hardening: MERGED PR #42 → main `9956214`, VERSION 0.27.0** (squash). Bugs #19/#20/#21 fixed. Dashboard **restarted on v0.27.0 with `--control`** (PID-scoped). Live-verified: GET 200; task link `href="/repo/Massoh/task/…"` → GET 200; file browser + intake intact; file & task traversal → 404; unauth POST → 403; startup banner confirms "map rebuilt per-request". Read-only control-plane surface complete + hardened. NB-1 filed (inbox #22: `_render_repo` does per-request discovery 3×/GET — cheap, optimize later). | owner |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -220,6 +224,15 @@ Decision: APPROVE. All conditions for #20/#19/#21 independently verified.
 Next recommended agent: orchestrator / squash-merge PR → main (VERSION 0.27.0).
 Next action: Squash-merge feat/fleet-hardening → main.
              Auto-merge-on-green applies (owner 2026-06-19 policy).
+
+DONE (owner/orchestrator, 2026-06-21):
+  Squash-merged feat/fleet-hardening → PR #42 → main 9956214, VERSION 0.27.0.
+  Dashboard RESTARTED on v0.27.0 with --control (PID-scoped). Live-verified:
+    GET / → 200; task href /repo/Massoh/task/… → GET 200; file browser + intake intact;
+    file & task traversal → 404; unauth POST → 403; banner "map rebuilt per-request".
+  NB-1 filed as inbox #22 (P3). Read-only control-plane surface COMPLETE + hardened.
+  Autonomous chain paused here: all owner-explicit read-only requests shipped + verified;
+    remaining work is owner-gated (tiers b/c write/exec) or P3 inbox follow-ups.
 ```
 
 ## Previous handoff (A2 file browser)
