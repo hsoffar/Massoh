@@ -584,17 +584,34 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
     filesystem root.  Anything not in the allowlist → 404.
     GET-only without --control (all other methods → 404).
     With --control: POST /repo/<name>/intake is the single write route (B1).
+
+    #19 fix: repo_name_map is rebuilt per-request via _get_repo_name_map()
+    using the same _discover_repos() source as the index page.  This ensures
+    a repo added to fleet.tsv after launch resolves without a server restart.
+    The rebuild is O(repos) cheap (simple directory scan / TSV read).
     """
 
     # Set by the factory before any request is handled.
     massoh_home: str = ""
-    repo_name_map: dict = {}  # name → abs_path; built once at startup
     # B1: control_mode default False — POST routes only exist when True.
     control_mode: bool = False
     # B2: capability_token — CSPRNG token, memory only, printed once, never logged.
     capability_token: str = ""
     # N1: the port this server is listening on (needed for same-origin check).
     server_port: int = DEFAULT_PORT
+
+    def _get_repo_name_map(self) -> dict:
+        """
+        #19 fix: Rebuild the repo name→path map per-request using the same
+        _discover_repos() source that _render_index() uses.  Keeps index and
+        routes consistent within a single request: if the index lists a repo,
+        the same request's route lookup will also find it.
+
+        N2: <name> is NEVER derived from any HTTP path — this is server-side
+        set-membership only, rebuilt from the trusted fleet registry/root.
+        """
+        repos = _discover_repos()
+        return _build_repo_name_map(repos)
 
     def log_message(self, fmt, *args):  # noqa: D102 — suppress default access log
         pass
@@ -641,6 +658,12 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
         # N2: strip query string / fragment; we never parse the path into a filesystem location.
         raw_path = self.path.split("?", 1)[0].split("#", 1)[0]
 
+        # #19 fix: rebuild the repo name→path map per-request from the same discovery
+        # source as the index page.  A repo added to fleet.tsv after launch resolves
+        # in the very next request without a server restart.
+        # N2: <name> is NEVER derived from any HTTP path — set-membership only.
+        repo_name_map = self._get_repo_name_map()
+
         # Route: GET /
         if raw_path == "/":
             body = self._render_index()
@@ -649,7 +672,7 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
 
         # Route: GET /repo/<name>/task/<task-id>  (slice 1b — check BEFORE /repo/<name>)
         # N2: DOUBLE set-membership check:
-        #   1. <name> must be in self.repo_name_map (discovered-repo set)
+        #   1. <name> must be in repo_name_map (discovered-repo set, rebuilt per-request)
         #   2. <task-id> must be in that repo's discovered task set
         # NEITHER value is ever os.path.join()-ed onto any filesystem root.
         mt = _TASK_VIEW_RE.match(raw_path)
@@ -658,11 +681,11 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
             task_id   = urllib.parse.unquote(mt.group(2))
 
             # Check 1: repo name in server-side repo set
-            if repo_name not in self.repo_name_map:
+            if repo_name not in repo_name_map:
                 self._send_404()
                 return
 
-            repo_path = self.repo_name_map[repo_name]
+            repo_path = repo_name_map[repo_name]
 
             # Check 2: task-id in that repo's task set (discovered from filesystem;
             # task_id is ONLY used for set-lookup — never as a path component)
@@ -680,7 +703,7 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
 
         # Route: GET /repo/<name>/file/<id>  (A2 — check BEFORE /repo/<name>)
         # A2 double set-membership:
-        #   1. <name> must be in self.repo_name_map
+        #   1. <name> must be in repo_name_map (rebuilt per-request)
         #   2. <id> must be in that repo's file map (built server-side from trusted repo_path)
         # NO byte of the URL id is ever joined onto a filesystem path.
         mf = _FILE_VIEW_RE.match(raw_path)
@@ -689,11 +712,11 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
             file_id   = mf.group(2)  # already [a-f0-9]{16} by regex
 
             # Check 1: repo name in server-side repo set
-            if repo_name not in self.repo_name_map:
+            if repo_name not in repo_name_map:
                 self._send_404()
                 return
 
-            repo_path = self.repo_name_map[repo_name]
+            repo_path = repo_name_map[repo_name]
 
             # Check 2: file id in that repo's file map (set-membership — NOT a path lookup)
             file_map = _discover_files_for_repo(repo_path)
@@ -722,11 +745,11 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
         if mfl:
             repo_name = urllib.parse.unquote(mfl.group(1))
 
-            if repo_name not in self.repo_name_map:
+            if repo_name not in repo_name_map:
                 self._send_404()
                 return
 
-            repo_path = self.repo_name_map[repo_name]
+            repo_path = repo_name_map[repo_name]
             body = self._render_file_list(repo_name, repo_path)
             self._send_html(body)
             return
@@ -737,14 +760,14 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
             # URL-decode the name (only percent-encoded safe chars; no path use).
             repo_name = urllib.parse.unquote(m.group(1))
 
-            # N2: SET-MEMBERSHIP CHECK — validate against the discovered-repo set.
+            # N2: SET-MEMBERSHIP CHECK — validate against the per-request discovered-repo set.
             # <repo_name> is NEVER joined onto a filesystem path.
-            # Only the path stored in self.repo_name_map[repo_name] is used.
-            if repo_name not in self.repo_name_map:
+            # Only the path stored in repo_name_map[repo_name] is used.
+            if repo_name not in repo_name_map:
                 self._send_404()
                 return
 
-            repo_path = self.repo_name_map[repo_name]
+            repo_path = repo_name_map[repo_name]
             body = self._render_repo(repo_name, repo_path)
             self._send_html(body)
             return
@@ -844,14 +867,16 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # --- B4: Repo name validation — server-side set-membership only ---
-        if repo_name not in self.repo_name_map:
+        # #19 fix: rebuild map per-request so a repo added post-launch is reachable here too.
+        _post_repo_name_map = self._get_repo_name_map()
+        if repo_name not in _post_repo_name_map:
             # Note: after auth checks passed; still audit this as an attempt.
             _write_audit_line("intake", repo_name, "denied-unknown-repo",
                               f"repo={repo_name!r}")
             self._send_404()
             return
 
-        repo_path = self.repo_name_map[repo_name]
+        repo_path = _post_repo_name_map[repo_name]
 
         # --- B3: Run intake via exec-array (shell=False) — no shell string, no interpolation ---
         # idea_raw is passed as a SINGLE argv element. All sanitization (IK1–IK11)
@@ -941,8 +966,10 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
         When control_mode is OFF, the sentinel is absent from the rendered HTML entirely
         (bash renders the read-only parked note instead of the form).
         """
-        # Build the all-repos list for sibling nav (newline-separated paths)
-        all_repos_lines = "\n".join(self.repo_name_map.values())
+        # Build the all-repos list for sibling nav (newline-separated paths).
+        # #19 fix: use the per-request map (already built in do_GET and passed via repo_path;
+        # rebuild here to get the full sibling list from the same up-to-date discovery).
+        all_repos_lines = "\n".join(self._get_repo_name_map().values())
 
         # Pass --control flag to the bash renderer so it knows to emit the real form.
         control_flag = "1" if self.control_mode else "0"
@@ -1056,22 +1083,25 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
 
 def _make_handler_class(
     massoh_home: str,
-    repo_name_map: dict,
     control_mode: bool = False,
     capability_token: str = "",
     server_port: int = DEFAULT_PORT,
 ):
     """
-    Create a handler class with massoh_home, repo_name_map, and auth state baked in.
+    Create a handler class with massoh_home and auth state baked in.
     B1: control_mode defaults to False — POST routes only exist when True.
     B2: capability_token is the per-run CSPRNG token; empty when not in control mode.
+
+    #19 fix: repo_name_map is NO LONGER stored at class level.  Each request
+    calls _get_repo_name_map() to rebuild it from the same _discover_repos()
+    source as the index page, so repos added to fleet.tsv after launch are
+    reachable without a server restart.
     """
 
     class BoundHandler(_FleetHandler):
         pass
 
     BoundHandler.massoh_home = massoh_home
-    BoundHandler.repo_name_map = repo_name_map
     BoundHandler.control_mode = control_mode
     BoundHandler.capability_token = capability_token  # B2: memory-only token
     BoundHandler.server_port = server_port
@@ -1118,9 +1148,10 @@ def main() -> int:
 
     massoh_home = _find_massoh_home()
 
-    # Discover repos at startup (server-side set; not from HTTP input — N2).
+    # Discover repos at startup for the initial count message (informational only).
+    # #19 fix: the actual repo_name_map is rebuilt per-request in _get_repo_name_map()
+    # so repos added to fleet.tsv after launch are reachable without restart.
     repos = _discover_repos()
-    repo_name_map = _build_repo_name_map(repos)
 
     # B1/B2: Mint capability token only when --control is requested.
     # Token is CSPRNG (secrets module), memory-only, printed once, never logged.
@@ -1131,7 +1162,6 @@ def main() -> int:
 
     handler_class = _make_handler_class(
         massoh_home=massoh_home,
-        repo_name_map=repo_name_map,
         control_mode=control_mode,
         capability_token=capability_token,
         server_port=port,
@@ -1158,7 +1188,7 @@ def main() -> int:
 
     # N3: print the URL before blocking.
     print(f"massoh-dashboard: serving at http://{BIND_HOST}:{port}/", flush=True)
-    print(f"massoh-dashboard: {len(repos)} repo(s) discovered.", flush=True)
+    print(f"massoh-dashboard: {len(repos)} repo(s) discovered at startup (map rebuilt per-request).", flush=True)
 
     # B2: Print capability token ONCE to the controlling terminal (stdout).
     # Token is printed here and NEVER again — not in logs, not in HTML (beyond the hidden field).

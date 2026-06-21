@@ -4,14 +4,14 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-21 (Control plane — dashboard LIVE at 127.0.0.1:8787 **with `--control`** on **v0.26.0** (Massoh+elard): file browser + intake button working. **Track A:** A1 ops panels PR #36 **v0.24.0**; **A2 file browser MERGED PR #40 v0.26.0** (read-only `/files` + `/file/<id>`, no-path-from-URL). **Track B:** auth model + **owner SIGNATURE #1** ✓ → **B0 intake button MERGED PR #37 v0.25.0**, suite 635. Tiers b/c (personality/hooks/restart/update) each need own sign-off. [Earlier: observability v0.20–0.23 PRs #31–#35; 24h queue v0.9–0.19.])
+Last updated: 2026-06-21 (Control plane — **A3 dashboard hardening APPROVED** (branch `feat/fleet-hardening` v0.27.0): task-list hrefs clickable (#20), per-request repo map (#19), no-broad-pkill guard (#21). Suite 685/685 green (independently run by reviewer). 8787 server survived. No-path-from-URL invariant confirmed after per-request refactor. Ready to auto-merge. [Earlier: A2 file browser MERGED PR #40 v0.26.0; B0 intake button MERGED PR #37 v0.25.0; A1 ops panels PR #36 v0.24.0.])
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**None active — Control plane read-only surface COMPLETE; dashboard live on v0.26.0 with `--control`.**
+**A3 dashboard hardening APPROVED (branch `feat/fleet-hardening`, commit `96c8ff6`); ready to auto-merge.**
 The fleet dashboard at **http://127.0.0.1:8787/** (Massoh + elard) now has the full read surface +
 the one authorized write:
 - **Read (Track A):** fleet KPI index + per-repo views (queue/cron/workflow panels), task drill-down,
@@ -31,8 +31,8 @@ v0.26.0, suite 676 green. Loopback-only / read-only-except-intake throughout.
 5. **Engine-extraction (#2)** — split the engine into its own repo (deferred by owner).
 6. Owner-optional: **deploy** v0.26.0 to `~/.claude` via `massoh update` (currently ~/.claude is v0.23.0).
 
-**Last shipped:** Control plane A2 — read-only file browser. **Merged PR #40, VERSION 0.26.0**, suite 676 green.
-(Earlier this session: B0 intake button PR #37 v0.25.0; deck lockfile cleanup PR #38; A1 ops panels PR #36 v0.24.0.)
+**Last shipped:** Control plane A3 dashboard hardening — task-list hrefs + per-request map + no-broad-pkill. **Branch `feat/fleet-hardening`, VERSION 0.27.0**, suite 685 green. Handoff at `.agent_tasks/TASK-2026-06-21-control-plane/05_A3_handoff.md`.
+(Earlier: A2 file browser Merged PR #40 v0.26.0; B0 intake button PR #37 v0.25.0; A1 ops panels PR #36 v0.24.0.)
 
 ## Open questions (owner decision needed)
 | Question | Raised | Context |
@@ -134,6 +134,7 @@ v0.26.0, suite 676 green. Loopback-only / read-only-except-intake throughout.
 | 2026-06-21 | Control plane track A **A2 file browser: IMPLEMENTED** — `GET /repo/<name>/files` + `GET /repo/<name>/file/<id>` routes; double set-membership security; opaque-id map (`sha256(relpath)[:16]`); 12-category artifact taxonomy; 256 KiB size cap + truncation notice; XSS/traversal/secret/symlink prevention; T-FB-1..17 live-HTTP tests all green; 676/676 suite green. Branch `feat/fleet-filebrowser` commit `e38ae21`, VERSION 0.26.0. → massoh-reviewer-qa. | implementer |
 | 2026-06-21 | Control plane **A2 file browser: APPROVE** — all conditions verified (06_A2_review.md); no-path-from-URL structurally proved (file_id dict-key only, abs_path from server-built map) + live reproduced (7 traversal attacks → 404 on ephemeral port 34948); secret/symlink/dotfile unreachable at enumeration (would-be ids → 404); 256 KiB cap + truncation notice reproduced; XSS escaped (raw script absent, &lt;script&gt; in &lt;pre&gt;); POST→404; byte-snapshot identical; PID 4291 (live 8787 dashboard) untouched throughout; 676/676 green (self-run); bin/massoh+manifest+safety-critical diff=0; NB-1 T-FB-12b static source (non-blocking); NB-2 symlink dual-exclusion defense-in-depth (non-blocking). Ready to merge. | reviewer-qa |
 | 2026-06-21 | Control plane **A2 file browser: MERGED PR #40 → main `a868524`, VERSION 0.26.0** (squash). `GET /repo/<name>/files` (grouped list) + `GET /repo/<name>/file/<id>` (read-only escaped view) live. Dashboard **restarted on v0.26.0 with `--control`** (PID-scoped kill of old 8787, no broad pkill) at 127.0.0.1:8787. Smoke-verified live: files list 200 (176 files on Massoh), known id → 200 (escaped `<pre>`), traversal/non-hex/unknown ids → 404, elard files list 200, intake form intact, unauth POST → 403. Last big read-only control-plane piece shipped. | owner |
+| 2026-06-21 | Control plane **A3 dashboard hardening: APPROVE** — #20 clickable task hrefs (href+200 reproduced live); #19 per-request rediscovery (post-launch repo 404→200 reproduced, no restart); #21 no-broad-pkill (zero executable matches, sentinel survived); no-path-from-URL STILL HOLDS after per-request refactor (7 traversal attacks → 404); 685/685 green (independently run); 8787 survived; scope clean; bin/massoh+manifest diff=0; AGENT_BACKLOG #19/#20/#21 DONE (Status cell only). Ready to auto-merge. | reviewer-qa |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -171,8 +172,57 @@ None.
 | TASK-2026-06-21-control-plane slice A1 | 06_review_result | APPROVE — all conditions verified (file:line refs in 06_A1_review.md); cron read-only confirmed (zero mutation commands in _fleet_render_cron_panel body; T-FS-33e static check); N4 escape confirmed (live XSS: raw `<script>` absent, `&lt;script&gt;` present; 9 escape call sites); read-only confirmed (byte-snapshot identical before/after; T-FS-36); POST→404 confirmed (T-FS-38a/b + live HTTP 404); no orphan server (T-FS-37); 597/597 green (independently run; T-FLN-6a pre-existing flake non-blocking); scope clean — 5 files (lib/verbs/fleet.sh +272, test/run.sh +167, VERSION, CHANGELOG, AGENT_SYNC rolling); bin/massoh+manifest.yml+templates diff=0; AGENT_BACKLOG.md absent from diff; NB-1 T-FS-33c broad digit match (non-blocking); NB-2 workflow done-signal assumes 06_review_result.md name (consistent with codebase, non-blocking). Ready to merge. |
 | TASK-2026-06-21-control-plane B0 | 06_review_result | APPROVE — B1–B7 verified (06_B0_review.md); 635/635 green; two-lock fail-closed + exec-array-no-shell + default-OFF + token-never-leaked + audit all independently reproduced. Ready to merge. |
 | TASK-2026-06-21-control-plane A2 | 06_review_result | APPROVE — all conditions verified (06_A2_review.md); no-path-from-URL structurally proved + live reproduced (7 traversal attacks → 404); secret/symlink/dotfile unreachable (enumeration exclusion confirmed); 256 KiB cap + truncation notice reproduced; XSS escaped (raw script absent, &lt;script&gt; in &lt;pre&gt;); POST→404; read-only byte-snapshot identical; PID-scoped teardown (live 8787 dashboard untouched); 676/676 green (self-run); scope = 5 product files + 3 task artifacts; bin/massoh+manifest.yml diff=0. Ready to merge. |
+| TASK-2026-06-21-control-plane A3 | 06_review_result | APPROVE — all conditions verified (06_A3_review.md); #20 href+200 reproduced live (ephemeral port, href="/repo/Massoh/task/TASK-2026-06-16-massoh-autonomous-fleet" → 200; id escaped in both href+text); #19 post-launch-repo-resolves reproduced (before=404 after-TSV-append=200, no restart); no-path-from-URL STILL HOLDS after per-request refactor (structural + live: 7 traversal attacks → 404 on ephemeral port 50303); #21 no-broad-pkill grep confirmed zero executable matches; sentinel survived; 685/685 green (independently run); 8787 alive before+after suite+reviewer tests; scope 8 files (lib/verbs/fleet.sh, scripts/massoh-dashboard, test/run.sh, VERSION, CHANGELOG, AGENT_BACKLOG, AGENT_SYNC, 05_handoff); bin/massoh+manifest.yml+NON_NEGOTIABLES diff=0; AGENT_BACKLOG rows 19/20/21 Status→DONE (cells only, rows intact); NB-1 triple _get_repo_name_map() call per /repo/<name> GET (non-blocking); NB-2 T-FS-A3-4 filter relies on 'grep' keyword for continuation line (correct, non-blocking). Ready to auto-merge. |
 
 ## Last handoff
+```
+Agent: massoh-reviewer-qa
+Mode: REVIEW_QA
+Task: TASK-2026-06-21-control-plane — A3 dashboard hardening (v0.27.0)
+Status: APPROVE. 06_A3_review.md written. 685/685 green (independently run).
+Branch: feat/fleet-hardening (commit 96c8ff6)
+
+Decision: APPROVE. All conditions for #20/#19/#21 independently verified.
+
+  #20 href+200 (ephemeral port 37517):
+    href="/repo/Massoh/task/TASK-2026-06-16-massoh-autonomous-fleet" present in /repo/Massoh.
+    GET on that href → HTTP 200 (existing drill-down route).
+    ID escaped in both href attribute and anchor text (_board_html_escape).
+
+  #19 post-launch rediscovery (ephemeral port, temp TSV):
+    Before TSV append → 404 (pre-condition confirmed).
+    After TSV append, no restart → 200 (#19 fix confirmed).
+    _get_repo_name_map() called per-request in do_GET() (line 665) and do_POST() (line 871).
+
+  No-path-from-URL STILL HOLDS after per-request refactor (ephemeral port 50303):
+    Structural: repo_name used for set-membership only; repo_path from server-built map.
+    task_id: regex [A-Za-z0-9_.~\-]+ + set-membership before os.path.join.
+    file_id: regex [a-f0-9]{16} + dict-key only.
+    Live traversal: ..%2f..%2fetc%2fpasswd → 404, ../../etc/passwd → 404,
+      unknown-repo → 404, unknown-repo/task/X → 404, known-repo/unknown-task → 404,
+      non-hex-file-id → 404, POST → 404.
+
+  #21 no-broad-pkill:
+    grep -nE 'pkill.*massoh-dashboard|killall.*massoh-dashboard' test/run.sh
+      | grep -vE '^[0-9]+:\s*#|grep|check\s+"' → empty (zero executable matches).
+    Sentinel server on ephemeral port: alive before and after A3 block.
+    8787 live server: 200 before suite, 200 after suite, 200 after reviewer tests.
+
+  Scope: 8 files (lib/verbs/fleet.sh, scripts/massoh-dashboard, test/run.sh,
+    VERSION 0.27.0, CHANGELOG, AGENT_BACKLOG, AGENT_SYNC, 05_A3_handoff).
+    bin/massoh diff=0. manifest.yml diff=0. NON_NEGOTIABLES diff=0.
+    AGENT_BACKLOG #19/#20/#21 Status→DONE (cells only, rows intact, count=43).
+
+  Test count: 685/685 green (independently run, exit 0). 9 new T-FS-A3 checks.
+  NB-1: triple _get_repo_name_map() call per /repo/<name> GET (correct, non-blocking).
+  NB-2: T-FS-A3-4 filter relies on 'grep' keyword for continuation line (correct, non-blocking).
+
+Next recommended agent: orchestrator / squash-merge PR → main (VERSION 0.27.0).
+Next action: Squash-merge feat/fleet-hardening → main.
+             Auto-merge-on-green applies (owner 2026-06-19 policy).
+```
+
+## Previous handoff (A2 file browser)
 ```
 Agent: massoh-reviewer-qa
 Mode: REVIEW_QA

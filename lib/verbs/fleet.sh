@@ -383,7 +383,7 @@ EOF2
 
   # Task list
   printf '<h2>Tasks</h2>\n'
-  _fleet_render_task_list "$repo"
+  _fleet_render_task_list "$repo" "$repo_name"
 
   # Recent commits
   printf '<h2>Recent commits</h2>\n'
@@ -840,12 +840,19 @@ _fleet_render_board_inline() {
   printf '</div>\n'
 }
 
-# _fleet_render_task_list <repo>
+# _fleet_render_task_list <repo> <repo_name>
 # Render a table of tasks with stage and last-handoff. N4: all escaped.
+# #20 fix: each task id is now an <a href="/repo/<name>/task/<id>"> link to the
+# existing drill-down route. The id is escaped in BOTH the href and the text via
+# _board_html_escape. url_tid is minimal-percent-encoded for the href attribute.
 _fleet_render_task_list() {
-  local repo="$1"
+  local repo="$1" repo_name="${2:-}"
   local tasks_dir="${repo}/.agent_tasks"
   local sync_file="${repo}/AGENT_SYNC.md"
+
+  # URL-safe name for link construction (minimal percent-encoding, same as _fleet_render_index)
+  local url_name
+  url_name="$(printf '%s' "$repo_name" | sed 's|%|%25|g; s| |%20|g; s|"|%22|g; s|<|%3C|g; s|>|%3E|g')"
 
   # Read last-handoff agent once
   local last_agent="—"
@@ -869,12 +876,20 @@ _fleet_render_task_list() {
       local task_id stage
       task_id="$(basename "$d")"
       stage="$(_board_stage_from_dir "$d")"
-      local esc_tid esc_stage esc_agent
+      local esc_tid esc_stage esc_agent url_tid
       esc_tid="$(   _board_html_escape "$task_id")"
       esc_stage="$( _board_html_escape "$stage")"
       esc_agent="$( _board_html_escape "$last_agent")"
-      printf '<tr><td>%s</td><td>%s</td><td>%s</td></tr>\n' \
-        "$esc_tid" "$esc_stage" "$esc_agent"
+      # #20 fix: URL-encode the task id for the href (same minimal encoding as repo name)
+      url_tid="$(printf '%s' "$task_id" | sed 's|%|%25|g; s| |%20|g; s|"|%22|g; s|<|%3C|g; s|>|%3E|g')"
+      if [ -n "$url_name" ]; then
+        # Link to the existing /repo/<name>/task/<id> drill-down route (N2: set-membership on server)
+        printf '<tr><td><a href="/repo/%s/task/%s">%s</a></td><td>%s</td><td>%s</td></tr>\n' \
+          "$url_name" "$url_tid" "$esc_tid" "$esc_stage" "$esc_agent"
+      else
+        printf '<tr><td>%s</td><td>%s</td><td>%s</td></tr>\n' \
+          "$esc_tid" "$esc_stage" "$esc_agent"
+      fi
     done
   fi
 
