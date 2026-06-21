@@ -120,6 +120,7 @@ auto-promotes). PRs #31–#35, v0.23.0, suite 574 green; loopback/read-only/zero
 | 2026-06-21 | Control plane: **deployed v0.23.0 to ~/.claude** (`massoh install`, backed up); `massoh` on PATH; dashboard live at 127.0.0.1:8787; **elard added** to `~/.claude/massoh/fleet.tsv` (Massoh + elard). | owner |
 | 2026-06-21 | Control plane **track B: architect designed auth model** (per-run capability token in-memory + same-origin Origin/Referer, two-lock fail-closed; risk tiers a/b/c; audit log) → `01_B_design.md`. **Owner SIGNATURE #1** — signed off on the auth model + authorized building B0 (intake button, tier-a append-only, --control default OFF). Tiers b/c each need fresh per-action sign-off. | owner |
 | 2026-06-21 | Control plane **track A: A1 ops panels** (queue/tickets + cron-read-only + workflow) MERGED PR #36 → v0.24.0; reviewer-qa APPROVE; 597 green; GET-only/read-only/escaped. | owner |
+| 2026-06-21 | Control plane **B0 intake-button: APPROVE** — B1–B7 all independently verified (file:line refs in 06_B0_review.md); 635/635 green (independently run twice); 6 deny-403s + zero-write reproduced (missing-token, wrong-token, no-Origin, foreign-Origin, body-only-token, header-only-token); exec-array no-shell reproduced (marker NOT created, literal text stored); default-OFF reproduced (POST→404 without --control, no token in stdout); token-never-leaked (not in source files, not in audit log, exactly once in HTML hidden field); audit log complete (denied-origin, denied-token, denied-unknown-repo, ok all present; token value absent from every line); scope = 5 files (scripts/massoh-dashboard, lib/verbs/fleet.sh, test/run.sh, VERSION, CHANGELOG); bin/massoh+manifest.yml+NON_NEGOTIABLES diff=0; doctor healthy; tiers b/c not built. Ready to merge. | reviewer-qa |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -155,54 +156,59 @@ None.
 | TASK-2026-06-20-fleet-observability slice 1c | 06_review_result | APPROVE — all conditions verified; POST→404 reproduced live (3 routes); panel escaped (&amp;&amp; present, no raw &lt;script&gt;); read-only (byte-snapshot REPO_A+B identical); 544/544 green; scope 4 files; bin/massoh+manifest diff=0; POST PARK holds (server file unmodified). Ready to merge. |
 | TASK-2026-06-20-fleet-observability slice 3 | 06_review_result | APPROVE — FLN1–FLN8 all independently verified; 574/574 green (independently run); engine-untouched (git diff empty on agent-os/bin/massoh/manifest.yml/templates/scripts/massoh-dashboard); zero-LLM (static grep clean); candidates-only header present; read-only on discovered repos (live byte-snapshot identical); promotion boundary reproduced live ([generalizable-candidate] at >=2 repos, [project:basename] at 1 repo); NB-1 T-FLN-6a timestamp fragility (non-blocking, disclosed by implementer); NB-2 awk ordering (non-blocking); no blockers. Ready to merge. |
 | TASK-2026-06-21-control-plane slice A1 | 06_review_result | APPROVE — all conditions verified (file:line refs in 06_A1_review.md); cron read-only confirmed (zero mutation commands in _fleet_render_cron_panel body; T-FS-33e static check); N4 escape confirmed (live XSS: raw `<script>` absent, `&lt;script&gt;` present; 9 escape call sites); read-only confirmed (byte-snapshot identical before/after; T-FS-36); POST→404 confirmed (T-FS-38a/b + live HTTP 404); no orphan server (T-FS-37); 597/597 green (independently run; T-FLN-6a pre-existing flake non-blocking); scope clean — 5 files (lib/verbs/fleet.sh +272, test/run.sh +167, VERSION, CHANGELOG, AGENT_SYNC rolling); bin/massoh+manifest.yml+templates diff=0; AGENT_BACKLOG.md absent from diff; NB-1 T-FS-33c broad digit match (non-blocking); NB-2 workflow done-signal assumes 06_review_result.md name (consistent with codebase, non-blocking). Ready to merge. |
+| TASK-2026-06-21-control-plane B0 | 06_review_result | APPROVE — B1–B7 verified (06_B0_review.md); 635/635 green; two-lock fail-closed + exec-array-no-shell + default-OFF + token-never-leaked + audit all independently reproduced. Ready to merge. |
 
 ## Last handoff
 ```
 Agent: massoh-reviewer-qa
 Mode: REVIEW_QA
-Task: TASK-2026-06-21-control-plane — slice A1 (ops read panels)
-Status: APPROVE. 06_A1_review.md written.
-Branch: feat/fleet-ops (uncommitted)
+Task: TASK-2026-06-21-control-plane — B0 intake-button pilot
+Status: APPROVE. 06_B0_review.md written.
+Branch: feat/fleet-intake-control (uncommitted)
 
-Decision: APPROVE. All mandatory conditions independently verified. 597/597 green.
+Decision: APPROVE. All B1–B7 conditions independently verified. 635/635 green.
 
-  Cron read-only (key safety):
-    _fleet_render_cron_panel body (fleet.sh:529–573) enumerated exhaustively.
-    All 3 "crontab"/"cron install" references are comments or a static printf display string.
-    Zero subprocess calls, zero backticks, zero $() enclosing a cron command.
-    grep -En 'crontab|cron install|cron on|cron off' lib/verbs/fleet.sh → comments + display string only.
-    T-FS-33e static awk check: PASS.
+  Two-lock fail-closed (B2 — highest priority):
+    All 6 deny paths independently reproduced on port 34493 (PID 3984840):
+      missing token → 403, wrong token → 403, no Origin → 403,
+      foreign Origin → 403, body-only token → 403, header-only token → 403.
+    BACKLOG md5 identical before=after for all 6 deny paths (zero write confirmed).
+    hmac.compare_digest at dashboard lines 507–508 (constant-time, both locks).
+    Origin check (Lock 1) runs BEFORE token check (Lock 2) — minimizes info leak.
 
-  N4 escape:
-    9 _board_html_escape call sites confirmed (6 queue, 3 cron, 3 workflow).
-    Live XSS reproduction: <script>alert("xss")</script> in intake backlog →
-      raw <script> count: 0; &lt;script&gt; count: 1.
-    T-FS-32a/b: PASS.
+  Exec-array no-shell (B3):
+    Idea "; rm -rf /tmp/harmless $(touch '/tmp/rv_PWNED_<ts>') `echo pwned` | cat"
+    posted with valid auth → 200, BACKLOG row appended, marker file NOT created.
+    subprocess.run([massoh_bin, "intake", idea_raw], shell=False) confirmed at line 543–546.
 
-  Read-only:
-    Byte-snapshot before=after (md5sum fbaa473030... identical).
-    T-FS-36: PASS. Three panel functions contain zero write operators on any repo path.
+  Default-OFF unchanged (B1):
+    Started without --control on port 33007 (PID 3980834):
+      POST /repo/test/intake → 404; GET / → 200; no "control token" in stdout.
+    Server stopped by PID 3980834.
 
-  POST → 404:
-    Live: POST /repo/<name> HTTP 404.
-    T-FS-38a (POST /) → 404; T-FS-38b (POST /repo/alpha-repo) → 404.
-    scripts/massoh-dashboard diff=0; do_POST handler unchanged.
+  Token-never-leaked (B2):
+    grep -r on REPO_ROOT (*.py, *.sh, *.md, *.txt) → zero matches for live token.
+    Token in served HTML: exactly 1 occurrence, in value="" attribute of hidden field.
+    grep "$TOKEN" on audit log → zero matches.
 
-  No orphan server: T-FS-37 PASS. Post-run ps check: no orphan process.
+  Audit (B6):
+    ~/.claude/massoh/control-audit.log: denied-origin, denied-token, denied-unknown-repo,
+    ok (allow) all present. Token value absent from every line. Append-only (open "a").
 
-  Scope: 5 files (lib/verbs/fleet.sh +272, test/run.sh +167 T-FS-30..38,
-    VERSION 0.24.0, CHANGELOG [0.24.0], AGENT_SYNC.md rolling update).
-    bin/massoh diff=0. manifest.yml diff=0. templates diff=0.
-    AGENT_BACKLOG.md absent from diff. scripts/massoh-dashboard diff=0.
+  Scope: 5 files (scripts/massoh-dashboard, lib/verbs/fleet.sh, test/run.sh,
+    VERSION 0.25.0, CHANGELOG [0.25.0]).
+    bin/massoh diff=0. manifest.yml diff=0. NON_NEGOTIABLES.md diff=0.
+    AGENT_BACKLOG.md absent from diff. Tiers b/c not built.
+    massoh doctor → healthy — install matches manifest.
 
-  Test count: 597/597 green.
-  T-FLN-6a: pre-existing timestamp flake (inbox #18). Non-blocking.
-  NB-1: T-FS-33c broad digit match (non-blocking).
-  NB-2: workflow done-signal assumes 06_review_result.md (consistent, non-blocking).
+  Test count: 635/635 green (independently run twice).
+  NB-1: audit log path hardcoded (fail-open on audit write error — acceptable per design).
+  NB-2: Referer startswith fallback correct (standard RFC behavior).
+  NB-3: B-PILOT-10 uses real ~/.claude/massoh/control-audit.log (append-only by design).
 
-Next recommended agent: orchestrator / auto-merge on green (per policy).
-Next action: Commit feat/fleet-ops, squash-merge PR → main (VERSION 0.24.0).
-             Track B (write/exec control plane) awaits owner sign-off on auth design.
+Next recommended agent: orchestrator / commit + squash-merge PR → main (VERSION 0.25.0).
+Next action: Commit feat/fleet-intake-control, squash-merge PR → main.
+             Tiers B1–B5 each await fresh owner sign-off per 01_B_design.md §7.
 ```
 
 ## [meta-engineer] 2026-06-19 — RMT proposal (TASK-2026-06-19-rmt)
