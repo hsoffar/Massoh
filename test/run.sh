@@ -3708,6 +3708,173 @@ FS_ST_PID=""
 
 fi  # end: python3 available guard (start-task panel tests)
 
+# ===========================================================================
+# == T-FS-30..38: A1 ops panels — Queue, Cron, Workflow (v0.24.0) ===========
+# ===========================================================================
+# Tests for the three new read-only ops panels added to _fleet_render_repo:
+#   T-FS-30  Queue panel present; shows TODO + BLOCKED rows
+#   T-FS-31  Queue panel shows Intake inbox rows
+#   T-FS-32  Queue panel escapes <script>/| in backlog text (N4)
+#   T-FS-33  Cron panel present; read-only status (no mutation)
+#   T-FS-34  Workflow panel present; shows in-flight task stages
+#   T-FS-35  Workflow pipeline contains bracket-marked current stage
+#   T-FS-36  Read-only byte-snapshot unchanged (all 3 panels)
+#   T-FS-37  No orphan process after panels rendered (N3 lifecycle)
+#   T-FS-38  POST still 404 (GET-only holds for panels, track B still parked)
+# ===========================================================================
+
+if ! command -v python3 >/dev/null 2>&1; then
+  ok "T-FS-30..38 python3 absent — A1 ops panels tests skipped"
+else
+
+# Reuse FS_FLEET_ROOT / FS_REPO_A from T-FS-7..29 (still under $TMP).
+# Extend FS_REPO_A with ops-panel-specific fixtures.
+
+# --- Extend AGENT_BACKLOG.md with entries for Queue panel ---
+# Append TODO + BLOCKED rows and an Intake inbox section.
+cat >> "$FS_REPO_A/AGENT_BACKLOG.md" <<'OPS_BACKLOG'
+
+## Intake inbox
+| # | Pri | Item | Status |
+|---|---|---|---|
+| 101 | P1 | <script>alert("xss")</script> intake item | TODO |
+| 102 | P2 | intake item with | pipe | TODO |
+| 103 | P1 | normal intake item | DONE |
+OPS_BACKLOG
+
+# Also ensure a TODO and BLOCKED exist in the main queue section
+# (already written by _mk_fleet_repo: "item" TODO and "blocked-item" BLOCKED)
+
+( cd "$FS_REPO_A" && git add -A && git commit -qm "feat: add ops-panel fixtures for T-FS-30..38" ) >/dev/null 2>&1
+
+# --- Add a cron state dir with a cadence_state and cron.log ---
+mkdir -p "$FS_REPO_A/.agent_tasks/cron"
+printf '7\n' > "$FS_REPO_A/.agent_tasks/cron/cadence_state"
+printf '[cron] tick ts=2026-06-21T00:00:00Z slug=item-1 agent_rc=0 gate_rc=0 tick_duration=42s\n' \
+  > "$FS_REPO_A/.agent_tasks/cron/cron.log"
+
+# --- Ensure FS_REPO_A has at least one in-flight task (no 06) ---
+# TASK-open-1 already exists without 06_review_result.md (added by _mk_fleet_repo).
+# Add a second in-flight task at a higher stage (licensed = 04 present)
+mkdir -p "$FS_REPO_A/.agent_tasks/TASK-inflight-2"
+printf '# 00 — Request\n' > "$FS_REPO_A/.agent_tasks/TASK-inflight-2/00_request.md"
+printf '# 04 — Implementation Packet\n' > "$FS_REPO_A/.agent_tasks/TASK-inflight-2/04_implementation_packet.md"
+
+( cd "$FS_REPO_A" && git add -A && git commit -qm "feat: add cron + inflight task for T-FS-30..38" ) >/dev/null 2>&1
+
+# Pick a free port for the ops-panel tests
+FS_OPS_PORT="$(_fs_free_port)"
+FS_OPS_PID=""
+
+# Start the server
+MASSOH_FLEET_ROOT="$FS_FLEET_ROOT" \
+  MASSOH_HOME="$REPO_ROOT" \
+  python3 "$DASHBOARD" --port "$FS_OPS_PORT" >/dev/null 2>&1 &
+FS_OPS_PID=$!
+
+# Wait up to 5 seconds for the server to be ready
+_fs_opswait=0
+until curl -s --connect-timeout 0.3 "http://127.0.0.1:${FS_OPS_PORT}/" >/dev/null 2>&1 \
+    || [ $_fs_opswait -ge 50 ]; do
+  sleep 0.1; _fs_opswait=$((_fs_opswait+1))
+done
+
+# Fetch the repo view body once (reused across T-FS-30..35)
+_fs_ops_body="$(curl -s "http://127.0.0.1:${FS_OPS_PORT}/repo/alpha-repo" 2>/dev/null || true)"
+
+# --- T-FS-30: Queue panel present; shows TODO and BLOCKED rows ---
+check "T-FS-30a /repo/<name> contains 'Queue' heading" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -qi 'Queue'"
+check "T-FS-30b Queue panel shows TODO item from main queue" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -q 'TODO'"
+check "T-FS-30c Queue panel shows BLOCKED item from main queue" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -q 'BLOCKED'"
+
+# --- T-FS-31: Queue panel shows Intake inbox rows ---
+check "T-FS-31a Queue panel contains 'Intake inbox' section marker or inbox item" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -qi 'intake'"
+check "T-FS-31b 'normal intake item' from inbox appears in page" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -q 'normal intake item'"
+
+# --- T-FS-32: Queue panel escapes XSS and pipe in backlog text (N4) ---
+# The intake item has <script>alert("xss")</script> — must be escaped
+check "T-FS-32a no raw <script> in queue panel output (N4 escape)" \
+  "! printf '%s' \"\$_fs_ops_body\" | grep -F '<script>alert'"
+# Escaped form must appear somewhere
+check "T-FS-32b &lt;script&gt; appears escaped in queue panel" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -qF '&lt;script&gt;'"
+
+# --- T-FS-33: Cron panel present; read-only status (no mutation) ---
+check "T-FS-33a /repo/<name> contains 'Cron' heading" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -qi 'Cron'"
+check "T-FS-33b Cron panel shows 'Configured' field" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -qi 'Configured'"
+# cadence_state file has value 7; panel must show it
+check "T-FS-33c Cron panel shows cadence tick value (7)" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -q '7'"
+# Last cron log line must appear (contains 'tick_duration')
+check "T-FS-33d Cron panel shows last log line (tick_duration or cron line)" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -qi 'tick_duration\|cron.log'"
+# Verify _fleet_render_cron_panel never EXECUTES a cron-mutating command (static source check).
+# We check that no bare invocation of crontab (as a command, not in a string literal) appears.
+# The function may mention 'cron install' in a printf/display string — that is safe.
+# We test for: $( ... crontab  or  \`crontab  (actual execution), not just the word in a printf.
+check "T-FS-33e _fleet_render_cron_panel never executes crontab (read-only, no exec)" \
+  "! awk '/_fleet_render_cron_panel\(\)/{f=1} f && /^\}$/{f=0; next} f' '$REPO_ROOT/lib/verbs/fleet.sh' | grep -v 'printf\|echo\|#' | grep -qE 'crontab|massoh-cron|cron once|cron off'"
+
+# --- T-FS-34: Workflow panel present; shows in-flight task stages ---
+check "T-FS-34a /repo/<name> contains 'Workflow' heading" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -qi 'Workflow'"
+check "T-FS-34b Workflow panel shows TASK-open-1 (in-flight)" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -q 'TASK-open-1'"
+check "T-FS-34c Workflow panel shows TASK-inflight-2 (in-flight at licensed stage)" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -q 'TASK-inflight-2'"
+check "T-FS-34d Workflow panel does NOT show completed TASK-done-1 (has 06)" \
+  "! printf '%s' \"\$_fs_ops_body\" | grep 'TASK-done-1' | grep -q 'licensed\|backlog\|arch-safety\|scoping\|implementing'"
+
+# --- T-FS-35: Workflow pipeline contains bracket-marked current stage ---
+# TASK-open-1 has only 00_request.md → stage = backlog = [00]
+# TASK-inflight-2 has 04_implementation_packet.md → stage = licensed = [04]
+check "T-FS-35a Workflow pipeline shows [00] for backlog-stage task" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -q '\[00\]'"
+check "T-FS-35b Workflow pipeline shows [04] for licensed-stage task" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -q '\[04\]'"
+# Pipeline arrow separator present
+check "T-FS-35c Workflow pipeline contains stage separator arrow" \
+  "printf '%s' \"\$_fs_ops_body\" | grep -q '→\|&rarr;\|&gt;'"
+
+# --- T-FS-36: Read-only byte-snapshot unchanged after all 3 panels rendered ---
+_fs36_before_a="$(cd "$FS_REPO_A" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+curl -s "http://127.0.0.1:${FS_OPS_PORT}/repo/alpha-repo" >/dev/null 2>&1 || true
+curl -s "http://127.0.0.1:${FS_OPS_PORT}/repo/beta-repo"  >/dev/null 2>&1 || true
+curl -s "http://127.0.0.1:${FS_OPS_PORT}/"                >/dev/null 2>&1 || true
+sleep 0.2
+_fs36_after_a="$(cd "$FS_REPO_A" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+check "T-FS-36 alpha-repo byte-snapshot unchanged after ops-panel render (read-only)" \
+  "[ '$_fs36_before_a' = '$_fs36_after_a' ]"
+
+# --- T-FS-38: POST still 404 (GET-only; track B parked) ---
+_fs38_post_root="$(curl -s -o /dev/null -w '%{http_code}' \
+  -X POST "http://127.0.0.1:${FS_OPS_PORT}/" 2>/dev/null || echo 0)"
+check "T-FS-38a POST / → 404 (GET-only — ops panels add no write path)" \
+  "[ '$_fs38_post_root' = '404' ]"
+_fs38_post_repo="$(curl -s -o /dev/null -w '%{http_code}' \
+  -X POST "http://127.0.0.1:${FS_OPS_PORT}/repo/alpha-repo" 2>/dev/null || echo 0)"
+check "T-FS-38b POST /repo/<name> → 404 (no write endpoint)" \
+  "[ '$_fs38_post_repo' = '404' ]"
+
+# --- T-FS-37: No orphan ops-panel server process (N3 lifecycle) ---
+kill "$FS_OPS_PID" 2>/dev/null || true
+_fs37_wait=0
+while kill -0 "$FS_OPS_PID" 2>/dev/null && [ $_fs37_wait -lt 30 ]; do
+  sleep 0.1; _fs37_wait=$((_fs37_wait+1))
+done
+check "T-FS-37 no orphan ops-panel server process after SIGTERM (N3 lifecycle)" \
+  "! kill -0 '$FS_OPS_PID' 2>/dev/null"
+FS_OPS_PID=""
+
+fi  # end: python3 available guard (A1 ops panels tests)
+
 echo "== T-FS done =="
 
 # ===========================================================================

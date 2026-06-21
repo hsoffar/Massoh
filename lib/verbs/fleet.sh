@@ -388,10 +388,282 @@ EOF2
   printf '<h2>Recent commits</h2>\n'
   _fleet_render_commits "$repo"
 
+  # Ops panels (slice A1 — all READ-ONLY, GET-only, no cron mutation)
+  printf '<h2>Queue / tickets</h2>\n'
+  _fleet_render_queue_panel "$repo"
+
+  printf '<h2>Cron</h2>\n'
+  _fleet_render_cron_panel "$repo"
+
+  printf '<h2>Workflow</h2>\n'
+  _fleet_render_workflow_panel "$repo"
+
   # Start a task (read-only panel — POST is PARKED, owner-gated)
   _fleet_render_start_task_panel "$repo" "$repo_name"
 
   _fleet_html_footer
+}
+
+# _fleet_render_queue_panel <repo>
+# Panel 1: Queue / tickets (A1 ops read panel).
+# Reads AGENT_BACKLOG.md — shows open TODO + BLOCKED rows and the "## Intake inbox" section.
+# Columns: pri · item · status.
+# READ-ONLY (FL1): only reads AGENT_BACKLOG.md via grep/awk. No writes, no exec.
+# N4: every interpolated value is HTML-escaped via _board_html_escape.
+# Graceful degrade: missing AGENT_BACKLOG.md → "—" cell, no crash (set -euo pipefail safe).
+_fleet_render_queue_panel() {
+  local repo="$1"
+  local backlog_file="${repo}/AGENT_BACKLOG.md"
+
+  printf '<div style="background:#fff;border-radius:.5rem;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:.75rem 1rem;margin-bottom:1rem;">\n'
+
+  if [ ! -f "$backlog_file" ]; then
+    printf '<p style="color:#6b7280;font-size:.85rem;">(no AGENT_BACKLOG.md &mdash; &mdash;)</p>\n'
+    printf '</div>\n'
+    return 0
+  fi
+
+  # --- TODO + BLOCKED rows from the main queue section ---
+  # We emit a combined table of all TODO/BLOCKED rows (any section before "## Intake inbox").
+  # awk: collect lines from the start until we hit "## Intake inbox" heading,
+  #      then print rows whose 6th pipe-field is TODO or BLOCKED.
+  # FL1: awk reads only; never writes.
+  local queue_rows
+  queue_rows="$(awk -F'|' '
+    /^## Intake inbox/ { stop=1 }
+    stop { next }
+    /^\|/ {
+      st=$6; gsub(/^[ \t]+|[ \t]+$/,"",st)
+      if (st=="TODO" || st=="BLOCKED") {
+        pri=$3; gsub(/^[ \t]+|[ \t]+$/,"",pri)
+        it=$4; gsub(/^[ \t]+|[ \t]+$/,"",it)
+        printf "%s\t%s\t%s\n", pri, it, st
+      }
+    }
+  ' "$backlog_file" 2>/dev/null | head -n 50 || true)"
+
+  # --- Intake inbox rows ---
+  # The "## Intake inbox" section has its own table with format: | # | Pri | Item | Status |
+  local inbox_rows
+  inbox_rows="$(awk -F'|' '
+    /^## Intake inbox/ { in_inbox=1; next }
+    /^## / && in_inbox { in_inbox=0 }
+    in_inbox && /^\|/ {
+      # columns: | # | Pri | Item | Status |
+      pri=$3; gsub(/^[ \t]+|[ \t]+$/,"",pri)
+      it=$4;  gsub(/^[ \t]+|[ \t]+$/,"",it)
+      st=$5;  gsub(/^[ \t]+|[ \t]+$/,"",st)
+      if (it=="" || it=="Item" || it=="-") next
+      printf "%s\t%s\t%s\n", pri, it, st
+    }
+  ' "$backlog_file" 2>/dev/null | head -n 30 || true)"
+
+  local has_any=0
+
+  if [ -n "$(printf '%s' "$queue_rows" | tr -d '[:space:]')" ] || \
+     [ -n "$(printf '%s' "$inbox_rows" | tr -d '[:space:]')" ]; then
+    has_any=1
+  fi
+
+  if [ "$has_any" = "0" ]; then
+    printf '<p style="color:#6b7280;font-size:.85rem;">(no open TODO or BLOCKED items)</p>\n'
+    printf '</div>\n'
+    return 0
+  fi
+
+  printf '<table class="task-list">\n'
+  printf '<thead><tr><th>Pri</th><th>Item</th><th>Status</th></tr></thead>\n'
+  printf '<tbody>\n'
+
+  # Emit queue rows (N4: all fields escaped)
+  if [ -n "$(printf '%s' "$queue_rows" | tr -d '[:space:]')" ]; then
+    local qrow
+    while IFS=$'\t' read -r qpri qitem qst; do
+      [ -n "$qitem" ] || continue
+      local e_qpri e_qitem e_qst
+      e_qpri="$(_board_html_escape "$qpri")"
+      e_qitem="$(_board_html_escape "$qitem")"
+      e_qst="$(_board_html_escape "$qst")"
+      local row_style=""
+      [ "$qst" = "BLOCKED" ] && row_style=' style="border-left:3px solid #ef4444;"'
+      printf '<tr%s><td>%s</td><td>%s</td><td>%s</td></tr>\n' \
+        "$row_style" "$e_qpri" "$e_qitem" "$e_qst"
+    done <<QUEUE_EOF
+$queue_rows
+QUEUE_EOF
+  fi
+
+  # Separator row between queue and inbox if both have content
+  if [ -n "$(printf '%s' "$queue_rows" | tr -d '[:space:]')" ] && \
+     [ -n "$(printf '%s' "$inbox_rows" | tr -d '[:space:]')" ]; then
+    printf '<tr><td colspan="3" style="background:#e5e7eb;font-size:.75rem;color:#6b7280;padding:.25rem .75rem;">Intake inbox</td></tr>\n'
+  fi
+
+  # Emit inbox rows (N4: all fields escaped)
+  if [ -n "$(printf '%s' "$inbox_rows" | tr -d '[:space:]')" ]; then
+    local inbox_line
+    while IFS=$'\t' read -r ipri iitem ist; do
+      [ -n "$iitem" ] || continue
+      local e_ipri e_iitem e_ist
+      e_ipri="$(_board_html_escape "$ipri")"
+      e_iitem="$(_board_html_escape "$iitem")"
+      e_ist="$(_board_html_escape "$ist")"
+      printf '<tr><td>%s</td><td>%s</td><td>%s</td></tr>\n' \
+        "$e_ipri" "$e_iitem" "$e_ist"
+    done <<INBOX_EOF
+$inbox_rows
+INBOX_EOF
+  fi
+
+  printf '</tbody>\n</table>\n'
+  printf '</div>\n'
+}
+
+# _fleet_render_cron_panel <repo>
+# Panel 2: Cron status (A1 ops read panel).
+# READ-ONLY: reads .agent_tasks/cron/cron.log (last line) and inspects the generated
+# crontab line from massoh-cron status output — we read files directly, never invoke
+# a cron-mutating command (no crontab -e, no massoh cron install, no massoh cron off).
+# N4: every interpolated value is HTML-escaped via _board_html_escape.
+# Graceful degrade: missing cron dir → "—", never crash.
+_fleet_render_cron_panel() {
+  local repo="$1"
+  local cron_dir="${repo}/.agent_tasks/cron"
+  local cron_log="${cron_dir}/cron.log"
+  local cadence_state_file="${cron_dir}/cadence_state"
+
+  printf '<div style="background:#fff;border-radius:.5rem;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:.75rem 1rem;margin-bottom:1rem;font-size:.85rem;">\n'
+  printf '<table class="task-list">\n'
+  printf '<thead><tr><th>Field</th><th>Value</th></tr></thead>\n'
+  printf '<tbody>\n'
+
+  # --- Configured? (cron dir exists) ---
+  local configured="no"
+  [ -d "$cron_dir" ] && configured="yes"
+  printf '<tr><td>Configured</td><td>%s</td></tr>\n' \
+    "$(_board_html_escape "$configured")"
+
+  # --- Cadence tick count (read cadence_state file — no exec) ---
+  local cadence_val="—"
+  if [ -f "$cadence_state_file" ]; then
+    cadence_val="$(head -n1 "$cadence_state_file" 2>/dev/null | tr -d '[:space:]' || true)"
+    [ -z "$cadence_val" ] && cadence_val="0"
+  fi
+  printf '<tr><td>Cadence tick</td><td>%s</td></tr>\n' \
+    "$(_board_html_escape "$cadence_val")"
+
+  # --- Last tick (last line of cron.log — read-only, never invoke crontab) ---
+  local last_tick="—"
+  if [ -f "$cron_log" ]; then
+    # Read only the last non-empty line (cap at 200 chars for display)
+    last_tick="$(tail -n 20 "$cron_log" 2>/dev/null \
+      | grep -v '^[[:space:]]*$' | tail -n1 | head -c 200 || true)"
+    [ -z "$last_tick" ] && last_tick="(log empty)"
+  fi
+  printf '<tr><td>Last log line</td><td style="font-family:monospace;font-size:.8rem;word-break:break-all;">%s</td></tr>\n' \
+    "$(_board_html_escape "$last_tick")"
+
+  # --- Read-only note (never invoke cron mutation) ---
+  printf '<tr><td colspan="2" style="color:#9ca3af;font-size:.75rem;font-style:italic;">'
+  printf 'Read-only status. To configure: run <code>massoh cron install</code> in your shell.'
+  printf '</td></tr>\n'
+
+  printf '</tbody>\n</table>\n'
+  printf '</div>\n'
+}
+
+# _fleet_render_workflow_panel <repo>
+# Panel 3: Workflow — in-flight tasks' current stage (A1 ops read panel).
+# Shows each active TASK-* dir (no 06_review_result.md = not done) with its highest
+# packet file (00→06) as the current stage. Compact 00→06 pipeline view.
+# READ-ONLY (FL1): only uses [ -f ] checks on known filenames; no writes.
+# N4: every interpolated value is HTML-escaped via _board_html_escape.
+# Graceful degrade: no tasks / no .agent_tasks → "—", never crash.
+_fleet_render_workflow_panel() {
+  local repo="$1"
+  local tasks_dir="${repo}/.agent_tasks"
+
+  # Stage labels for the compact pipeline (00→06)
+  # Format: "file_suffix|label|short"
+  # We list highest-to-lowest to find current stage (same logic as _board_stage_from_dir)
+  local _STAGES_ORDER
+  _STAGES_ORDER="06_review_result.md|review|06
+05_implementation_handoff.md|implementing|05
+04_implementation_packet.md|licensed|04
+03_architecture_safety.md|arch-safety|03
+02_product_scope.md|scoping|02
+01_product_scope.md|scoping|01
+00_request.md|backlog|00"
+
+  printf '<div style="background:#fff;border-radius:.5rem;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:.75rem 1rem;margin-bottom:1rem;">\n'
+
+  if [ ! -d "$tasks_dir" ]; then
+    printf '<p style="color:#6b7280;font-size:.85rem;">(no .agent_tasks directory &mdash; &mdash;)</p>\n'
+    printf '</div>\n'
+    return 0
+  fi
+
+  # Collect in-flight tasks (no 06_review_result.md → active/in-flight)
+  local found_any=0
+
+  printf '<table class="task-list">\n'
+  printf '<thead><tr><th>Task</th><th>Stage</th><th>Pipeline</th></tr></thead>\n'
+  printf '<tbody>\n'
+
+  local d
+  for d in "$tasks_dir"/TASK-*/; do
+    [ -d "$d" ] || continue
+    # Done tasks (have 06) are excluded — only show in-flight
+    [ -f "${d}06_review_result.md" ] && continue
+    found_any=1
+
+    local task_id
+    task_id="$(basename "$d")"
+
+    # Determine current stage (highest packet present)
+    local current_stage="backlog" current_short="00"
+    local sf_line sf_file sf_label sf_short
+    while IFS='|' read -r sf_file sf_label sf_short; do
+      [ -n "$sf_file" ] || continue
+      if [ -f "${d}${sf_file}" ]; then
+        current_stage="$sf_label"
+        current_short="$sf_short"
+        break
+      fi
+    done <<STAGES_EOF
+$_STAGES_ORDER
+STAGES_EOF
+
+    # Build a compact pipeline string: 00 → 01 → 02 → 03 → 04 → 05 → [06]
+    # Highlight the current stage step with [] brackets
+    local pipeline=""
+    local steps="00 01 02 03 04 05 06"
+    local step
+    for step in $steps; do
+      if [ -n "$pipeline" ]; then
+        pipeline="${pipeline} → "
+      fi
+      if [ "$step" = "$current_short" ]; then
+        pipeline="${pipeline}[${step}]"
+      else
+        pipeline="${pipeline}${step}"
+      fi
+    done
+
+    local esc_tid esc_stage esc_pipeline
+    esc_tid="$(      _board_html_escape "$task_id")"
+    esc_stage="$(    _board_html_escape "$current_stage")"
+    esc_pipeline="$( _board_html_escape "$pipeline")"
+    printf '<tr><td>%s</td><td>%s</td><td style="font-family:monospace;font-size:.8rem;">%s</td></tr>\n' \
+      "$esc_tid" "$esc_stage" "$esc_pipeline"
+  done
+
+  if [ "$found_any" = "0" ]; then
+    printf '<tr><td colspan="3" style="color:#6b7280;">(no in-flight tasks)</td></tr>\n'
+  fi
+
+  printf '</tbody>\n</table>\n'
+  printf '</div>\n'
 }
 
 # _fleet_render_start_task_panel <repo_abs_path> <repo_name>
