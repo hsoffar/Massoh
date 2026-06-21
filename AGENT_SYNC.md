@@ -4,14 +4,14 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-21 (Control plane — dashboard LIVE at 127.0.0.1:8787 **with `--control`** on **v0.26.0** (Massoh+elard): file browser + intake button working. **Track A:** A1 ops panels PR #36 **v0.24.0**; **A2 file browser MERGED PR #40 v0.26.0** (read-only `/files` + `/file/<id>`, no-path-from-URL). **Track B:** auth model + **owner SIGNATURE #1** ✓ → **B0 intake button MERGED PR #37 v0.25.0**, suite 635. Tiers b/c (personality/hooks/restart/update) each need own sign-off. [Earlier: observability v0.20–0.23 PRs #31–#35; 24h queue v0.9–0.19.])
+Last updated: 2026-06-21 (Control plane — **A3 dashboard hardening on branch `feat/fleet-hardening` v0.27.0**: task-list hrefs clickable (#20), per-request repo map (#19), no-broad-pkill guard (#21). Suite 685/685 green. 8787 server survived. Handoff → `massoh-reviewer-qa`. [Earlier: A2 file browser MERGED PR #40 v0.26.0; B0 intake button MERGED PR #37 v0.25.0; A1 ops panels PR #36 v0.24.0.])
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**None active — Control plane read-only surface COMPLETE; dashboard live on v0.26.0 with `--control`.**
+**A3 dashboard hardening COMPLETE (branch `feat/fleet-hardening`, commit `96c8ff6`); pending reviewer QA.**
 The fleet dashboard at **http://127.0.0.1:8787/** (Massoh + elard) now has the full read surface +
 the one authorized write:
 - **Read (Track A):** fleet KPI index + per-repo views (queue/cron/workflow panels), task drill-down,
@@ -31,8 +31,8 @@ v0.26.0, suite 676 green. Loopback-only / read-only-except-intake throughout.
 5. **Engine-extraction (#2)** — split the engine into its own repo (deferred by owner).
 6. Owner-optional: **deploy** v0.26.0 to `~/.claude` via `massoh update` (currently ~/.claude is v0.23.0).
 
-**Last shipped:** Control plane A2 — read-only file browser. **Merged PR #40, VERSION 0.26.0**, suite 676 green.
-(Earlier this session: B0 intake button PR #37 v0.25.0; deck lockfile cleanup PR #38; A1 ops panels PR #36 v0.24.0.)
+**Last shipped:** Control plane A3 dashboard hardening — task-list hrefs + per-request map + no-broad-pkill. **Branch `feat/fleet-hardening`, VERSION 0.27.0**, suite 685 green. Handoff at `.agent_tasks/TASK-2026-06-21-control-plane/05_A3_handoff.md`.
+(Earlier: A2 file browser Merged PR #40 v0.26.0; B0 intake button PR #37 v0.25.0; A1 ops panels PR #36 v0.24.0.)
 
 ## Open questions (owner decision needed)
 | Question | Raised | Context |
