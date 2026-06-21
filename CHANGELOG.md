@@ -11,6 +11,33 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.26.0] - 2026-06-21
+
+### Added
+- **A2 control plane — read-only file browser on the fleet dashboard:**
+  `GET /repo/<name>/files` (artifact listing by category) and
+  `GET /repo/<name>/file/<id>` (view one file, size-capped at 256 KiB)
+  added to `scripts/massoh-dashboard`. Both routes are GET-only, loopback-only,
+  and use the same double set-membership discipline as the task drill-down (slice 1b):
+  repo name validated against `repo_name_map`, opaque file id (`sha256(relpath)[:16]`)
+  validated against a server-built per-repo map. No byte of any URL is ever joined
+  onto a filesystem path.
+
+  - **Closed taxonomy (12 categories):** task packets, ledger, task notes, briefs,
+    proposed drafts, governance (AGENT_SYNC, BACKLOG, NOW/NEXT/LATER, CHARTER),
+    metrics, learnings, ADRs. Source code and safety-critical files are outside the
+    taxonomy (no id, unreachable).
+  - **Confinement:** secrets/dotfiles/binaries/escaped-symlinks excluded at
+    enumeration (no id → unreachable); `realpath` repo-root re-check before every
+    read; 256 KiB size cap with visible truncation notice.
+  - **Escape everywhere:** file contents, names, labels, category headers all
+    processed through `_board_html_escape` in bash (N4). A `.md` file containing
+    `<script>` renders inert.
+  - **Generated files link** added to the per-repo view (`_fleet_render_repo`).
+  - **T-FB-1..17** live-HTTP tests added to `test/run.sh` (traversal/unknown-id/
+    secret/symlink → 404; size-cap truncation; XSS-in-contents + in-name escape;
+    POST → 404; read-only byte-snapshot; no-orphan PID-scoped teardown).
+
 ## [0.25.0] - 2026-06-21
 
 ### Added

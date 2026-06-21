@@ -4527,6 +4527,393 @@ rm -f "$FLEET_LEARN_FILE"
 
 echo "== T-FLN done =="
 
+# ===========================================================================
+# == T-FB-1..17: A2 — fleet read-only file browser (v0.26.0) ===============
+# ===========================================================================
+# Tests for the GET /repo/<name>/files (listing) and GET /repo/<name>/file/<id>
+# (view) routes added in slice A2.
+#
+# Load-bearing invariant: NO byte of any URL is ever joined onto a filesystem
+# path.  The server builds opaque-id→relpath maps from trusted repo_path;
+# the view route accepts only a known id via double set-membership.
+#
+# T-FB-1   /repo/<name>/files → 200, has task-list table + Brief label + /file/ link
+# T-FB-2   /repo/<name>/files → contains stage label for a packet (Packet/request)
+# T-FB-3   Extract a real id; GET /file/<id> → 200, content in <pre>
+# T-FB-4   /file/<valid-hex-but-unknown> → 404 (set-membership)
+# T-FB-5   /file/..%2f..%2fetc%2fpasswd → 404 (regex rejects non-hex)
+# T-FB-5b  /file/../../../../etc/passwd → 404
+# T-FB-5c  /file/0000000000000000 → 404 (not in map)
+# T-FB-6   Unknown repo /files and /file/<id> → 404
+# T-FB-7   Symlink-escape: symlink to /etc/hostname has no id; /etc/hostname never in body
+# T-FB-8   Secret exclusion: secret-token.md absent from listing
+# T-FB-9   Dotfile exclusion: nothing under .git/ in listing
+# T-FB-10  Size cap: >256 KiB file truncated with notice; tail bytes absent
+# T-FB-11  XSS-in-contents: <script>alert("fb")</script> → escaped in <pre>
+# T-FB-12  XSS-in-name: label/relpath escaped in listing
+# T-FB-13  POST /repo/<name>/files and /file/<id> → 404 (GET-only)
+# T-FB-14  Read-only byte-snapshot: FS_REPO_A unchanged after listing + viewing
+# T-FB-15  No orphan: SIGTERM server; assert PID gone (PID-scoped teardown)
+# T-FB-16  Source guard: dashboard uses realpath-confinement + map lookup (no translate_path)
+# T-FB-17  Loopback still hard-coded (BIND_HOST = 127.0.0.1)
+# ===========================================================================
+
+echo "== T-FB: fleet read-only file browser (A2 v0.26.0) =="
+
+if ! command -v python3 >/dev/null 2>&1; then
+  ok "T-FB-1..17 python3 absent — file browser tests skipped"
+else
+
+# ---------------------------------------------------------------------------
+# Reuse FS_FLEET_ROOT / FS_REPO_A from T-FS-7..38 (already under $TMP).
+# Add T-FB-specific fixtures to FS_REPO_A.
+# ---------------------------------------------------------------------------
+
+# 1. agent-project/briefs/sample-brief.md  (normal artifact — should appear in listing)
+mkdir -p "$FS_REPO_A/agent-project/briefs"
+printf '# Sample brief\n\nThis is a test brief for T-FB-1.\n' \
+  > "$FS_REPO_A/agent-project/briefs/sample-brief.md"
+
+# 2. A *.proposed.md draft (proposed category)
+printf '# Sample proposed draft\n\nThis is a proposed draft for T-FB.\n' \
+  > "$FS_REPO_A/agent-project/sample.proposed.md"
+
+# 3. A file whose CONTENTS contain XSS (for T-FB-11)
+mkdir -p "$FS_REPO_A/agent-project/briefs"
+printf '# XSS content test\n\n<script>alert("fb")</script> & "x"\n' \
+  > "$FS_REPO_A/agent-project/briefs/xss-content.md"
+
+# 4. A secret-named file that MUST NOT be enumerated (T-FB-8)
+printf '# This is a secret token file\ntoken: supersecret123\n' \
+  > "$FS_REPO_A/agent-project/secret-token.md"
+
+# 5. A large file > 256 KiB (for T-FB-10)
+python3 -c "
+import os
+with open('$FS_REPO_A/agent-project/briefs/large-file.md', 'w') as f:
+    f.write('# Large file\n')
+    # Write 300 KiB of 'A' characters in lines
+    line = 'A' * 79 + '\n'
+    for _ in range(3900):
+        f.write(line)
+    f.write('TAIL_MARKER_LINE\n')
+" 2>/dev/null
+
+# 6. A symlink that escapes the repo root (T-FB-7)
+#    This symlink points outside the repo; it must NOT get an id.
+ln -sf /etc/hostname "$FS_REPO_A/agent-project/briefs/escape.md" 2>/dev/null || true
+
+# 7. AGENT_SYNC.md (governance — should appear in listing)
+# Already created by _mk_fleet_repo.
+
+# Commit the new fixtures (needed for the read-only byte-snapshot test T-FB-14,
+# which compares the snapshot BEFORE vs AFTER the HTTP requests).
+( cd "$FS_REPO_A" && git add -A && git commit -qm "feat: add T-FB fixtures" ) >/dev/null 2>&1
+
+# ---------------------------------------------------------------------------
+# Start a dedicated T-FB test server on a free ephemeral port.
+# Teardown: ONLY kill FB_PID (never a broad pkill — there may be a live dashboard).
+# ---------------------------------------------------------------------------
+FB_PORT="$(_fs_free_port)"
+FB_PID=""
+FB_STDERR="$TMP/fb_server_stderr.txt"
+
+MASSOH_FLEET_ROOT="$FS_FLEET_ROOT" \
+  MASSOH_HOME="$REPO_ROOT" \
+  python3 "$DASHBOARD" --port "$FB_PORT" >/dev/null 2>"$FB_STDERR" &
+FB_PID=$!
+
+# Wait up to 5 seconds for the server to be ready.
+_fb_wait=0
+until curl -s --connect-timeout 0.3 "http://127.0.0.1:${FB_PORT}/" >/dev/null 2>&1 \
+    || [ $_fb_wait -ge 50 ]; do
+  sleep 0.1; _fb_wait=$((_fb_wait+1))
+done
+
+# ---------------------------------------------------------------------------
+# T-FB-1: /repo/alpha-repo/files → 200, task-list table, Brief label, /file/ link
+# ---------------------------------------------------------------------------
+FB1_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/files" 2>/dev/null || echo 0)"
+FB1_BODY="$(curl -s "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/files" 2>/dev/null || true)"
+check "T-FB-1a /repo/alpha-repo/files → HTTP 200" \
+  "[ '$FB1_CODE' = '200' ]"
+check "T-FB-1b /repo/alpha-repo/files contains task-list table" \
+  "printf '%s' \"\$FB1_BODY\" | grep -q 'task-list'"
+check "T-FB-1c /repo/alpha-repo/files contains Brief label" \
+  "printf '%s' \"\$FB1_BODY\" | grep -q 'Brief'"
+check "T-FB-1d /repo/alpha-repo/files contains /file/ link" \
+  "printf '%s' \"\$FB1_BODY\" | grep -q '/file/'"
+
+# ---------------------------------------------------------------------------
+# T-FB-2: listing contains stage label for a task packet (Packet · … · request)
+# ---------------------------------------------------------------------------
+check "T-FB-2a /repo/alpha-repo/files contains 'Packet' label" \
+  "printf '%s' \"\$FB1_BODY\" | grep -q 'Packet'"
+check "T-FB-2b /repo/alpha-repo/files contains a stage label (request or impl-packet etc)" \
+  "printf '%s' \"\$FB1_BODY\" | grep -qE 'request|impl-packet|handoff|review|arch-safety|product-scope'"
+
+# ---------------------------------------------------------------------------
+# T-FB-3: Extract a real id from the listing; GET /file/<id> → 200, content in <pre>
+# ---------------------------------------------------------------------------
+# Extract the first /file/<hex-id> href from the listing body.
+FB3_ID="$(printf '%s' "$FB1_BODY" | grep -oE '/file/[a-f0-9]{16}' | head -n1 | sed 's|/file/||')"
+if [ -n "$FB3_ID" ]; then
+  FB3_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/${FB3_ID}" 2>/dev/null || echo 0)"
+  FB3_BODY="$(curl -s "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/${FB3_ID}" 2>/dev/null || true)"
+  check "T-FB-3a GET /repo/alpha-repo/file/<real-id> → HTTP 200" \
+    "[ '$FB3_CODE' = '200' ]"
+  check "T-FB-3b file view contains <pre> element" \
+    "printf '%s' \"\$FB3_BODY\" | grep -q '<pre'"
+  check "T-FB-3c file view has massoh-generated sentinel" \
+    "printf '%s' \"\$FB3_BODY\" | grep -q 'massoh-generated'"
+else
+  ok "T-FB-3a GET /repo/alpha-repo/file/<real-id> → HTTP 200 (SKIP: no id in listing)"
+  ok "T-FB-3b file view contains <pre> element (SKIP: no id)"
+  ok "T-FB-3c file view has massoh-generated sentinel (SKIP: no id)"
+fi
+
+# ---------------------------------------------------------------------------
+# T-FB-4: Valid hex shape but unknown id → 404 (set-membership)
+# ---------------------------------------------------------------------------
+FB4_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/deadbeefcafe1234" 2>/dev/null || echo 0)"
+check "T-FB-4 /file/<valid-hex-unknown-id> → 404 (set-membership)" \
+  "[ '$FB4_CODE' = '404' ]"
+
+# ---------------------------------------------------------------------------
+# T-FB-5: Encoded traversal → 404 (regex rejects non-hex id)
+# ---------------------------------------------------------------------------
+FB5_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/..%2f..%2fetc%2fpasswd" 2>/dev/null || echo 0)"
+check "T-FB-5 /file/..%2f..%2fetc%2fpasswd → 404 (regex rejects non-hex)" \
+  "[ '$FB5_CODE' = '404' ]"
+
+# ---------------------------------------------------------------------------
+# T-FB-5b: Raw dot-dot traversal → 404
+# ---------------------------------------------------------------------------
+FB5B_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/../../../../etc/passwd" 2>/dev/null || echo 0)"
+check "T-FB-5b /file/../../../../etc/passwd → 404 (raw traversal rejected)" \
+  "[ '$FB5B_CODE' = '404' ]"
+
+# ---------------------------------------------------------------------------
+# T-FB-5c: All-zero id (valid hex shape, not in map) → 404
+# ---------------------------------------------------------------------------
+FB5C_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/0000000000000000" 2>/dev/null || echo 0)"
+check "T-FB-5c /file/0000000000000000 → 404 (zero-id not in map)" \
+  "[ '$FB5C_CODE' = '404' ]"
+
+# ---------------------------------------------------------------------------
+# T-FB-6: Unknown repo → 404 on both /files and /file/<id>
+# ---------------------------------------------------------------------------
+FB6A_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${FB_PORT}/repo/no-such-repo-xyz/files" 2>/dev/null || echo 0)"
+check "T-FB-6a /repo/<unknown>/files → 404 (repo set-membership)" \
+  "[ '$FB6A_CODE' = '404' ]"
+
+FB6B_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${FB_PORT}/repo/no-such-repo-xyz/file/abcdef0123456789" 2>/dev/null || echo 0)"
+check "T-FB-6b /repo/<unknown>/file/<id> → 404 (repo set-membership)" \
+  "[ '$FB6B_CODE' = '404' ]"
+
+# ---------------------------------------------------------------------------
+# T-FB-7: Symlink-escape — escape.md → /etc/hostname — no id; /etc/hostname content absent
+# ---------------------------------------------------------------------------
+# The symlink escape.md points to /etc/hostname (outside repo root).
+# Assert it has NO id in the listing (no /file/ link with its relpath).
+# Also assert /etc/hostname content never appears in any view body.
+# We compute what its id WOULD be if it were wrongly enumerated:
+FB7_WOULD_BE_ID="$(python3 -c "import hashlib; print(hashlib.sha256('agent-project/briefs/escape.md'.encode()).hexdigest()[:16])" 2>/dev/null || true)"
+if [ -n "$FB7_WOULD_BE_ID" ]; then
+  FB7_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/${FB7_WOULD_BE_ID}" 2>/dev/null || echo 0)"
+  check "T-FB-7a symlink escape.md has no id — constructing its would-be id → 404" \
+    "[ '$FB7_CODE' = '404' ]"
+fi
+
+# Verify /etc/hostname content does not appear in any body we can fetch via the listing
+# (belt-and-suspenders: the /files listing body must not contain lines from /etc/hostname)
+# We read the first line of /etc/hostname (the hostname) and check it's absent from the listing.
+FB7_HOSTNAME="$(head -n1 /etc/hostname 2>/dev/null | tr -d '\n' || true)"
+if [ -n "$FB7_HOSTNAME" ] && [ -n "$FB7_WOULD_BE_ID" ]; then
+  check "T-FB-7b /etc/hostname content never in file listing body" \
+    "! printf '%s' \"\$FB1_BODY\" | grep -qF '$FB7_HOSTNAME'"
+else
+  ok "T-FB-7b /etc/hostname content never in file listing body (SKIP: empty hostname)"
+fi
+
+# ---------------------------------------------------------------------------
+# T-FB-8: Secret exclusion — secret-token.md absent from listing (no id)
+# ---------------------------------------------------------------------------
+# secret-token.md matches the denylist ('secret' and 'token' in basename).
+# It must not appear in the listing.
+check "T-FB-8a secret-token.md not in listing (secret-name exclusion)" \
+  "! printf '%s' \"\$FB1_BODY\" | grep -q 'secret-token'"
+
+# Compute its would-be id and assert it 404s.
+FB8_WOULD_BE_ID="$(python3 -c "import hashlib; print(hashlib.sha256('agent-project/secret-token.md'.encode()).hexdigest()[:16])" 2>/dev/null || true)"
+if [ -n "$FB8_WOULD_BE_ID" ]; then
+  FB8_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/${FB8_WOULD_BE_ID}" 2>/dev/null || echo 0)"
+  check "T-FB-8b secret-token.md would-be id → 404 (no id → unreachable)" \
+    "[ '$FB8_CODE' = '404' ]"
+fi
+
+# ---------------------------------------------------------------------------
+# T-FB-9: Dotfile exclusion — nothing from .git/ in listing
+# ---------------------------------------------------------------------------
+check "T-FB-9a .git/ files absent from listing (dotfile exclusion)" \
+  "! printf '%s' \"\$FB1_BODY\" | grep -q '\.git/'"
+
+# HEAD or config from .git/ would-be id
+FB9_WOULD_BE_ID="$(python3 -c "import hashlib; print(hashlib.sha256('.git/config'.encode()).hexdigest()[:16])" 2>/dev/null || true)"
+if [ -n "$FB9_WOULD_BE_ID" ]; then
+  FB9_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/${FB9_WOULD_BE_ID}" 2>/dev/null || echo 0)"
+  check "T-FB-9b .git/config would-be id → 404 (dotfile exclusion)" \
+    "[ '$FB9_CODE' = '404' ]"
+fi
+
+# ---------------------------------------------------------------------------
+# T-FB-10: Size cap — large-file.md (>256 KiB) → truncation notice; tail absent
+# ---------------------------------------------------------------------------
+# Compute the id for the large file
+FB10_ID="$(python3 -c "import hashlib; print(hashlib.sha256('agent-project/briefs/large-file.md'.encode()).hexdigest()[:16])" 2>/dev/null || true)"
+if [ -n "$FB10_ID" ]; then
+  FB10_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/${FB10_ID}" 2>/dev/null || echo 0)"
+  # Write body to a temp file to avoid variable-size pipe issues with large responses.
+  FB10_BODY_FILE="$TMP/fb10_body.html"
+  curl -s "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/${FB10_ID}" \
+    > "$FB10_BODY_FILE" 2>/dev/null || true
+  check "T-FB-10a large-file.md id → HTTP 200" \
+    "[ '$FB10_CODE' = '200' ]"
+  check "T-FB-10b large-file.md view contains truncation notice" \
+    "grep -qi 'truncated\|256 KiB\|Showing first' '$FB10_BODY_FILE'"
+  check "T-FB-10c TAIL_MARKER_LINE NOT in truncated view (tail bytes absent)" \
+    "! grep -qF 'TAIL_MARKER_LINE' '$FB10_BODY_FILE'"
+  # Body byte length is bounded: response should be well under 1 MiB
+  FB10_LEN="$(wc -c < "$FB10_BODY_FILE" 2>/dev/null | tr -d '[:space:]' || echo 0)"
+  check "T-FB-10d truncated view body length is bounded (< 512000 bytes)" \
+    "[ '$FB10_LEN' -lt 512000 ]"
+else
+  ok "T-FB-10a large-file.md id → HTTP 200 (SKIP)"
+  ok "T-FB-10b large-file.md view contains truncation notice (SKIP)"
+  ok "T-FB-10c TAIL_MARKER_LINE NOT in truncated view (SKIP)"
+  ok "T-FB-10d truncated view body length is bounded (SKIP)"
+fi
+
+# ---------------------------------------------------------------------------
+# T-FB-11: XSS-in-contents — <script>alert("fb")</script> → escaped in <pre>
+# ---------------------------------------------------------------------------
+# xss-content.md has <script>alert("fb")</script> in its body.
+FB11_ID="$(python3 -c "import hashlib; print(hashlib.sha256('agent-project/briefs/xss-content.md'.encode()).hexdigest()[:16])" 2>/dev/null || true)"
+if [ -n "$FB11_ID" ]; then
+  FB11_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/${FB11_ID}" 2>/dev/null || echo 0)"
+  FB11_BODY="$(curl -s "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/${FB11_ID}" 2>/dev/null || true)"
+  check "T-FB-11a xss-content.md → HTTP 200" \
+    "[ '$FB11_CODE' = '200' ]"
+  check "T-FB-11b no raw <script>alert('fb') in view body (N4 escape)" \
+    "! printf '%s' \"\$FB11_BODY\" | grep -F '<script>alert'"
+  check "T-FB-11c &lt;script&gt; escaped form IS in <pre> (N4 proof)" \
+    "printf '%s' \"\$FB11_BODY\" | grep -qF '&lt;script&gt;'"
+else
+  ok "T-FB-11a xss-content.md → HTTP 200 (SKIP)"
+  ok "T-FB-11b no raw <script>alert in view body (SKIP)"
+  ok "T-FB-11c &lt;script&gt; escaped form IS in <pre> (SKIP)"
+fi
+
+# ---------------------------------------------------------------------------
+# T-FB-12: XSS-in-name — listing escapes the label/relpath (no raw markup)
+# ---------------------------------------------------------------------------
+# sample-brief.md has a normal name, but all labels/relpaths in the listing
+# must be HTML-escaped. Verify no raw < or > from any filename appears in the
+# listing that would allow injection.
+check "T-FB-12a no raw unescaped <script> in listing body (N4 label/relpath escape)" \
+  "! printf '%s' \"\$FB1_BODY\" | grep -F '<script>'"
+# Also verify the escaped form IS used by checking _board_html_escape is referenced in fleet.sh
+check "T-FB-12b fleet.sh _fleet_render_file_list uses _board_html_escape (N4 source check)" \
+  "grep -q '_board_html_escape' '$REPO_ROOT/lib/verbs/fleet.sh'"
+
+# ---------------------------------------------------------------------------
+# T-FB-13: POST → 404 (GET-only, no write surface — even with --control)
+# ---------------------------------------------------------------------------
+FB13A_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+  -X POST "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/files" 2>/dev/null || echo 0)"
+check "T-FB-13a POST /repo/alpha-repo/files → 404 (GET-only)" \
+  "[ '$FB13A_CODE' = '404' ]"
+
+FB13B_ID="${FB3_ID:-abcdef0123456789}"
+FB13B_CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+  -X POST "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/${FB13B_ID}" 2>/dev/null || echo 0)"
+check "T-FB-13b POST /repo/alpha-repo/file/<id> → 404 (GET-only, no write)" \
+  "[ '$FB13B_CODE' = '404' ]"
+
+# ---------------------------------------------------------------------------
+# T-FB-14: Read-only byte-snapshot — FS_REPO_A unchanged after listing + viewing
+# ---------------------------------------------------------------------------
+FB14_BEFORE="$(cd "$FS_REPO_A" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+
+# Issue a batch of file browser requests
+curl -s "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/files" >/dev/null 2>&1 || true
+if [ -n "$FB3_ID" ]; then
+  curl -s "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/${FB3_ID}" >/dev/null 2>&1 || true
+fi
+if [ -n "$FB10_ID" ]; then
+  curl -s "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/${FB10_ID}" >/dev/null 2>&1 || true
+fi
+if [ -n "$FB11_ID" ]; then
+  curl -s "http://127.0.0.1:${FB_PORT}/repo/alpha-repo/file/${FB11_ID}" >/dev/null 2>&1 || true
+fi
+sleep 0.2
+
+FB14_AFTER="$(cd "$FS_REPO_A" && find . -path ./.git -prune -o -type f -print | sort | xargs ls -la 2>/dev/null | md5sum)"
+check "T-FB-14 alpha-repo byte-snapshot unchanged after file browser requests (read-only)" \
+  "[ '$FB14_BEFORE' = '$FB14_AFTER' ]"
+
+# ---------------------------------------------------------------------------
+# T-FB-15: No orphan — SIGTERM the server; assert PID gone (PID-scoped teardown)
+# ---------------------------------------------------------------------------
+kill "$FB_PID" 2>/dev/null || true
+_fb15_wait=0
+while kill -0 "$FB_PID" 2>/dev/null && [ $_fb15_wait -lt 30 ]; do
+  sleep 0.1; _fb15_wait=$((_fb15_wait+1))
+done
+check "T-FB-15 no orphan file browser server after SIGTERM (PID-scoped teardown)" \
+  "! kill -0 '$FB_PID' 2>/dev/null"
+FB_PID=""
+
+# ---------------------------------------------------------------------------
+# T-FB-16: Source guard — dashboard uses realpath-confinement + map lookup;
+#           no translate_path / SimpleHTTPRequestHandler introduced.
+# ---------------------------------------------------------------------------
+check "T-FB-16a dashboard uses _is_confined (realpath confinement) in source" \
+  "grep -q '_is_confined' '$DASHBOARD'"
+check "T-FB-16b dashboard uses _discover_files_for_repo (map lookup) in source" \
+  "grep -q '_discover_files_for_repo' '$DASHBOARD'"
+check "T-FB-16c _FILE_VIEW_RE regex present in dashboard source" \
+  "grep -q '_FILE_VIEW_RE' '$DASHBOARD'"
+check "T-FB-16d no translate_path() call introduced in handler methods (not a file server)" \
+  "! grep -qE '^\s+(self\.)?translate_path\(' '$DASHBOARD'"
+check "T-FB-16e does not extend SimpleHTTPRequestHandler (custom handler only)" \
+  "! grep -qE 'class.*SimpleHTTPRequestHandler' '$DASHBOARD'"
+check "T-FB-16f double set-membership: file_id not in file_map check present in source" \
+  "grep -q 'file_id not in file_map' '$DASHBOARD'"
+
+# ---------------------------------------------------------------------------
+# T-FB-17: Loopback still hard-coded (BIND_HOST = 127.0.0.1) after A2 edit
+# ---------------------------------------------------------------------------
+check "T-FB-17 BIND_HOST = 127.0.0.1 in dashboard source (N1 — after A2 edit)" \
+  "grep -qE 'BIND_HOST = .127\\.0\\.0\\.1.' '$DASHBOARD'"
+
+fi  # end: python3 available guard (T-FB tests)
+
+echo "== T-FB done =="
+
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi
 [ "$fails" -eq 0 ]

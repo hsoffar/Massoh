@@ -399,6 +399,16 @@ EOF2
   printf '<h2>Workflow</h2>\n'
   _fleet_render_workflow_panel "$repo"
 
+  # Generated files panel (A2 — read-only link to the file browser listing)
+  printf '<h2>Generated files</h2>\n'
+  local url_name_repo
+  url_name_repo="$(printf '%s' "$repo_name" | sed 's|%|%25|g; s| |%20|g; s|"|%22|g; s|<|%3C|g; s|>|%3E|g')"
+  printf '<div style="background:#fff;border-radius:.5rem;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:.75rem 1rem;margin-bottom:1rem;font-size:.85rem;">\n'
+  printf '<p>Browse generated artifacts (task packets, briefs, governance, metrics, ADRs) for this repo:</p>\n'
+  printf '<a href="/repo/%s/files" style="color:#2563eb;text-decoration:none;font-weight:600;">View all files &rarr;</a>\n' \
+    "$url_name_repo"
+  printf '</div>\n'
+
   # Add idea panel (read-only note by default; real form with --control)
   _fleet_render_start_task_panel "$repo" "$repo_name" "$control_flag"
 
@@ -1085,6 +1095,161 @@ $ledger_html
 EOF2
       printf '</tbody>\n</table>\n'
     fi
+  fi
+
+  _fleet_html_footer
+}
+
+# _fleet_render_file_list <repo> <repo_name> <map_tsv>
+# A2: Render the /repo/<name>/files listing page as HTML to stdout.
+# $1 = repo abs path (trusted, from server-side map — never from URL)
+# $2 = repo_name (display name, already validated by server set-membership)
+# $3 = map_tsv: server-built TSV "opaque_id<TAB>category<TAB>label<TAB>relpath\n..."
+# N4: every interpolated value goes through _board_html_escape.
+# FL1: read-only — this function reads no files; the server built the map.
+_fleet_render_file_list() {
+  local repo="$1" repo_name="$2" map_tsv="$3"
+  set -euo pipefail
+
+  local esc_name
+  esc_name="$(_board_html_escape "$repo_name")"
+
+  local url_name
+  url_name="$(printf '%s' "$repo_name" | sed 's|%|%25|g; s| |%20|g; s|"|%22|g; s|<|%3C|g; s|>|%3E|g')"
+
+  _fleet_html_header "Massoh Fleet — ${esc_name} — Files"
+
+  # Breadcrumb: / › /repo/<name> › files
+  printf '<nav>'
+  printf '<a href="/">&larr; Fleet index</a>'
+  printf ' &rsaquo; <a href="/repo/%s">%s</a>' "$url_name" "$esc_name"
+  printf ' &rsaquo; Files'
+  printf '</nav>\n'
+
+  printf '<h1>%s &mdash; Generated files</h1>\n' "$esc_name"
+  printf '<p style="font-size:.82rem;color:#6b7280;">Artifact file browser &mdash; read-only (no write, no exec). &mdash; <a href="/repo/%s">&larr; Back to repo</a></p>\n' \
+    "$url_name"
+
+  # Check if map is empty
+  local has_files=0
+  if [ -n "$(printf '%s' "$map_tsv" | tr -d '[:space:]')" ]; then
+    has_files=1
+  fi
+
+  if [ "$has_files" = "0" ]; then
+    printf '<p style="color:#6b7280;font-size:.85rem;">(no enumerable artifact files found)</p>\n'
+    _fleet_html_footer
+    return 0
+  fi
+
+  printf '<table class="task-list">\n'
+  printf '<thead><tr><th>Label</th><th>Category</th><th>Path</th><th>View</th></tr></thead>\n'
+  printf '<tbody>\n'
+
+  # Parse each TSV line: opaque_id<TAB>category<TAB>label<TAB>relpath
+  local line
+  while IFS=$'\t' read -r fid fcat flabel frel; do
+    [ -n "$fid" ] || continue
+    local e_cat e_label e_rel e_fid
+    e_cat="$(  _board_html_escape "$fcat")"
+    e_label="$(_board_html_escape "$flabel")"
+    e_rel="$(  _board_html_escape "$frel")"
+    e_fid="$(  _board_html_escape "$fid")"
+    printf '<tr><td>%s</td><td>%s</td><td style="font-family:monospace;font-size:.8rem;">%s</td>' \
+      "$e_label" "$e_cat" "$e_rel"
+    printf '<td><a href="/repo/%s/file/%s" style="color:#2563eb;">view</a></td></tr>\n' \
+      "$url_name" "$e_fid"
+  done <<FILE_LIST_EOF
+$map_tsv
+FILE_LIST_EOF
+
+  printf '</tbody>\n</table>\n'
+  _fleet_html_footer
+}
+
+# _fleet_render_file_view <repo> <repo_name> <rel> <abs_path> <label> <truncated:0|1>
+# A2: Render the /repo/<name>/file/<id> view page as HTML to stdout.
+# $1 = repo abs path (trusted, from server-side map — never from URL)
+# $2 = repo_name (display name, already validated)
+# $3 = repo-relative path (server-built — never from URL)
+# $4 = abs_path (trusted; built from repo_path + server-generated rel — never from URL)
+# $5 = human label (server-generated from taxonomy)
+# $6 = truncated: 0 or 1 (set by server based on file size vs MAX_VIEW_BYTES)
+# N4: file CONTENTS go through _board_html_escape before <pre>. All names/labels escaped.
+# FL1: reads abs_path with head -c 262144 (cap); no write.
+_fleet_render_file_view() {
+  local repo="$1" repo_name="$2" rel="$3" abs_path="$4" label="$5" truncated="${6:-0}"
+  set -euo pipefail
+
+  local MAX_BYTES=262144  # 256 KiB — mirrors MAX_VIEW_BYTES in the Python server
+
+  local esc_name esc_label esc_rel
+  esc_name="$(  _board_html_escape "$repo_name")"
+  esc_label="$( _board_html_escape "$label")"
+  esc_rel="$(   _board_html_escape "$rel")"
+
+  local url_name
+  url_name="$(printf '%s' "$repo_name" | sed 's|%|%25|g; s| |%20|g; s|"|%22|g; s|<|%3C|g; s|>|%3E|g')"
+
+  _fleet_html_header "Massoh Fleet — ${esc_name} — ${esc_label}"
+
+  # Breadcrumb: / › /repo/<name> › /repo/<name>/files › <label>
+  printf '<nav>'
+  printf '<a href="/">&larr; Fleet index</a>'
+  printf ' &rsaquo; <a href="/repo/%s">%s</a>' "$url_name" "$esc_name"
+  printf ' &rsaquo; <a href="/repo/%s/files">Files</a>' "$url_name"
+  printf ' &rsaquo; %s' "$esc_label"
+  printf '</nav>\n'
+
+  printf '<h1>%s</h1>\n' "$esc_label"
+  printf '<p style="font-size:.82rem;color:#6b7280;font-family:monospace;">%s</p>\n' "$esc_rel"
+  printf '<p style="font-size:.82rem;color:#6b7280;"><a href="/repo/%s/files">&larr; Back to file list</a></p>\n' \
+    "$url_name"
+
+  # Truncation notice: shown when the Python server flagged truncation (truncated=1)
+  # OR when bash independently detects the file exceeds MAX_BYTES (belt-and-suspenders).
+  # Both checks use the trusted abs_path — never from the URL.
+  local show_notice=0
+  [ "$truncated" = "1" ] && show_notice=1
+  if [ "$show_notice" = "0" ] && [ -f "$abs_path" ]; then
+    local _fb_size
+    _fb_size="$(wc -c < "$abs_path" 2>/dev/null || printf '0')"
+    # strip whitespace from wc -c output
+    _fb_size="$(printf '%s' "$_fb_size" | tr -d '[:space:]')"
+    if [ -n "$_fb_size" ] && [ "$_fb_size" -gt "$MAX_BYTES" ] 2>/dev/null; then
+      show_notice=1
+    fi
+  fi
+  if [ "$show_notice" = "1" ]; then
+    local file_size_kib=""
+    if [ -f "$abs_path" ]; then
+      local file_bytes
+      file_bytes="$(wc -c < "$abs_path" 2>/dev/null || printf '0')"
+      file_bytes="$(printf '%s' "$file_bytes" | tr -d '[:space:]')"
+      [ -n "$file_bytes" ] && file_size_kib=$(( (file_bytes + 1023) / 1024 )) || file_size_kib="?"
+    fi
+    local esc_size
+    esc_size="$(_board_html_escape "${file_size_kib}KiB")"
+    printf '<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:.375rem;padding:.5rem .75rem;margin-bottom:.75rem;font-size:.84rem;">\n'
+    printf 'Showing first 256 KiB of %s &mdash; file truncated for display (read-only view).\n' "$esc_size"
+    printf '</div>\n'
+  fi
+
+  # Read file content with size cap, pipe through sed-escape, wrap in <pre>.
+  # N4: file contents are repo data → MUST be escaped before inclusion in HTML.
+  # FL1: read-only (head -c MAX_BYTES; no write target).
+  # We pipe head -c directly through sed (not via a variable) to avoid bash
+  # argument-length limits on very large files (262144 bytes = 256 KiB).
+  if [ ! -f "$abs_path" ]; then
+    printf '<p style="color:#6b7280;font-size:.85rem;">(file not found)</p>\n'
+  else
+    printf '<pre style="background:#f8f9fa;border:1px solid #e5e7eb;border-radius:.375rem;padding:.75rem 1rem;font-size:.82rem;overflow-x:auto;white-space:pre-wrap;word-break:break-word;">'
+    # N4: pipe head output through the same sed escaping as _board_html_escape.
+    # Using sed pipeline (not a bash variable) to safely handle large files.
+    head -c "$MAX_BYTES" "$abs_path" 2>/dev/null \
+      | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g' \
+      || true
+    printf '</pre>\n'
   fi
 
   _fleet_html_footer

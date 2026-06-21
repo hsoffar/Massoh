@@ -8,6 +8,8 @@ Security model:
         GET /                            → fleet index (bash-rendered HTML)
         GET /repo/<name>                 → per-repo view (bash-rendered HTML)
         GET /repo/<name>/task/<task-id>  → task drill-down (bash-rendered HTML)
+        GET /repo/<name>/files           → artifact file listing (A2, bash-rendered HTML)
+        GET /repo/<name>/file/<id>       → artifact file view (A2, bash-rendered HTML)
       With --control ONLY:
         POST /repo/<name>/intake         → auth-gated intake (token + same-origin)
       <name> validated against the discovered-repo set (set-membership only;
@@ -40,6 +42,8 @@ Usage (called by lib/verbs/fleet.sh):
 
 import argparse
 import datetime
+import glob
+import hashlib
 import hmac
 import http.server
 import os
@@ -63,6 +67,11 @@ DEFAULT_PORT = 8787
 # B2: Body size cap — requests over this limit → 413, no write.
 # ---------------------------------------------------------------------------
 MAX_BODY_BYTES = 8192  # 8 KiB
+
+# ---------------------------------------------------------------------------
+# A2: File view size cap — files larger than this are truncated (256 KiB).
+# ---------------------------------------------------------------------------
+MAX_VIEW_BYTES = 262144  # 256 KiB
 
 # ---------------------------------------------------------------------------
 # B6: Audit log path — append-only, never in git, mirrors fleet cache location.
@@ -207,6 +216,261 @@ def _discover_tasks_for_repo(repo_path: str) -> set:
 
 
 # ---------------------------------------------------------------------------
+# A2: Artifact taxonomy — closed list of (category, glob, label_template) tuples.
+# Globs are rooted at repo_path (never at a URL-supplied value).
+# Extension allowlist: only .md, .txt, .tsv, .csv, .log, .json, .yml, .yaml.
+# ---------------------------------------------------------------------------
+_STAGE_LABELS = {
+    "00": "request",
+    "01": "product-scope",
+    "02": "product-scope",
+    "03": "arch-safety",
+    "04": "impl-packet",
+    "05": "handoff",
+    "06": "review",
+}
+
+# Each entry: (category_name, glob_pattern, label_fn)
+# label_fn is called with the repo-relative path and returns a human label.
+def _build_taxonomy():  # noqa: C901 — big but straightforward
+    """
+    Return the closed artifact taxonomy as a list of
+    (category, glob_pattern_relative_to_repo, label_fn(relpath)->str) tuples.
+    """
+    def _label_packet(relpath):
+        # relpath like: .agent_tasks/TASK-foo/04_implementation_packet.md
+        parts = relpath.replace("\\", "/").split("/")
+        task_id = parts[1] if len(parts) > 1 else "?"
+        basename = parts[-1] if parts else relpath
+        nn = basename[:2] if len(basename) >= 2 else "??"
+        stage = _STAGE_LABELS.get(nn, nn)
+        return f"Packet · {task_id} · {stage}"
+
+    def _label_ledger(relpath):
+        return "Ledger · time/token/cost (TSV)"
+
+    def _label_task_other(relpath):
+        parts = relpath.replace("\\", "/").split("/")
+        task_id = parts[1] if len(parts) > 1 else "?"
+        basename = parts[-1] if parts else relpath
+        return f"Task note · {task_id} · {basename}"
+
+    def _label_brief(relpath):
+        basename = os.path.basename(relpath)
+        return f"Brief · {basename}"
+
+    def _label_proposed(relpath):
+        return f"Proposed draft · {relpath}"
+
+    def _label_sync(relpath):
+        return "Governance · AGENT_SYNC (mode / handoff / decisions)"
+
+    def _label_backlog(relpath):
+        return "Governance · AGENT_BACKLOG (queue)"
+
+    def _label_now_next(relpath):
+        return "Governance · NOW/NEXT/LATER"
+
+    def _label_charter(relpath):
+        basename = os.path.basename(relpath)
+        return f"Governance · {basename}"
+
+    def _label_metrics(relpath):
+        return "Metrics · snapshots"
+
+    def _label_learnings(relpath):
+        basename = os.path.basename(relpath)
+        return f"Learnings · {basename}"
+
+    def _label_adr(relpath):
+        basename = os.path.basename(relpath)
+        return f"Decision (ADR) · {basename}"
+
+    return [
+        # (category, glob, label_fn)
+        # #1 Task packet: .agent_tasks/TASK-*/0*_*.md
+        ("task-packet",   ".agent_tasks/TASK-*/0*_*.md",     _label_packet),
+        # #2 Task ledger: .agent_tasks/ledger.tsv
+        ("task-ledger",   ".agent_tasks/ledger.tsv",          _label_ledger),
+        # #3 Task other: .agent_tasks/TASK-*/*.md (caught after #1 deduplication)
+        ("task-other",    ".agent_tasks/TASK-*/*.md",          _label_task_other),
+        # #4 Brief: agent-project/briefs/*.md
+        ("brief",         "agent-project/briefs/*.md",         _label_brief),
+        # #5 Proposed draft: agent-project/**/*.proposed.md + *.proposed.md at root
+        ("proposed",      "*.proposed.md",                     _label_proposed),
+        ("proposed",      "agent-project/*.proposed.md",       _label_proposed),
+        # #6 Governance: AGENT_SYNC.md
+        ("governance",    "AGENT_SYNC.md",                     _label_sync),
+        # #7 Governance: AGENT_BACKLOG.md
+        ("governance",    "AGENT_BACKLOG.md",                  _label_backlog),
+        # #8 Governance: agent-project/NOW_NEXT_LATER.md
+        ("governance",    "agent-project/NOW_NEXT_LATER.md",   _label_now_next),
+        # #9 Governance: CHARTER + NON_NEGOTIABLES
+        ("governance",    "agent-project/CHARTER.md",          _label_charter),
+        ("governance",    "agent-project/NON_NEGOTIABLES.md",  _label_charter),
+        # #10 Metrics
+        ("metrics",       "agent-project/METRICS.md",          _label_metrics),
+        # #11 Learnings
+        ("learnings",     "agent-project/LEARNINGS.proposed.md",       _label_learnings),
+        ("learnings",     "agent-project/FLEET_LEARNINGS.proposed.md", _label_learnings),
+        ("learnings",     "agent-project/META.proposed.md",            _label_learnings),
+        # #12 ADR
+        ("adr",           "docs/adr/*.md",                     _label_adr),
+    ]
+
+_TAXONOMY = _build_taxonomy()
+
+# Allowed text extensions — primary gate for binary detection.
+_ALLOWED_EXTENSIONS = {".md", ".txt", ".tsv", ".csv", ".log", ".json", ".yml", ".yaml"}
+
+# Secret-name denylist (case-insensitive substring match on basename).
+_SECRET_SUBSTRINGS = {
+    "secret", "token", "password", "passwd", "credential", ".pem", ".key",
+    "id_rsa", ".env", "apikey", "api_key", "htpasswd",
+}
+
+# Max entries in the file map per repo (mirrors 500-entry design cap).
+_FILE_MAP_CAP = 500
+
+
+def _is_secret_name(basename: str) -> bool:
+    """Return True if the basename contains any secret-name substring (case-insensitive)."""
+    lower = basename.lower()
+    return any(s in lower for s in _SECRET_SUBSTRINGS)
+
+
+def _is_dotpath(relpath: str) -> bool:
+    """
+    Return True if any component of relpath (split on os.sep) starts with '.',
+    EXCEPT the special allowlisted root '.agent_tasks'.
+    """
+    parts = relpath.replace("\\", "/").split("/")
+    for i, part in enumerate(parts):
+        if not part.startswith("."):
+            continue
+        # Allow '.agent_tasks' as the FIRST component only.
+        if i == 0 and part == ".agent_tasks":
+            continue
+        return True
+    return False
+
+
+def _is_binary_sniff(abs_path: str) -> bool:
+    """Return True if the file's first 1024 bytes contain a NUL byte (binary-sniff)."""
+    try:
+        with open(abs_path, "rb") as f:
+            chunk = f.read(1024)
+        return b"\x00" in chunk
+    except OSError:
+        return True  # unreadable → treat as binary → exclude
+
+
+def _is_confined(abs_path: str, repo_path: str) -> bool:
+    """
+    A2 §2.1: Repo-root confinement check.
+    Resolves symlinks via os.path.realpath and checks the file stays within the repo root.
+    Returns True only if the file is a regular file inside (or equal to) the repo root.
+    """
+    try:
+        real_root = os.path.realpath(repo_path)
+        real_file = os.path.realpath(abs_path)
+        confined = (real_file == real_root or
+                    real_file.startswith(real_root + os.sep))
+        return confined and os.path.isfile(real_file)
+    except OSError:
+        return False
+
+
+def _discover_files_for_repo(repo_path: str) -> dict:
+    """
+    A2 §1.1: Build a per-repo opaque_id → repo-relative-path map.
+
+    Algorithm:
+    1. Start from the trusted repo_path (NEVER from any URL input).
+    2. For each (category, glob, label_fn) in the closed taxonomy, expand the glob
+       relative to repo_path using Python's glob.glob.
+    3. Apply the confinement + exclusion filter (§2.2): skip symlinks, dotpaths,
+       secret names, non-allowed extensions, binary-sniffed files, non-regular-files.
+    4. Assign each survivor opaque_id = sha256(relpath)[:16].
+    5. Cap at _FILE_MAP_CAP entries (first-glob-wins deterministic).
+
+    Returns: dict { opaque_id (str) -> (relpath (str), category (str), label (str)) }
+    Note: stores a 3-tuple value so callers can build the TSV without re-globbing.
+    """
+    file_map = {}  # opaque_id -> (relpath, category, label)
+    seen_relpaths = set()  # dedup (same file matched by multiple globs → first wins)
+    count = 0
+
+    for category, glob_pattern, label_fn in _TAXONOMY:
+        if count >= _FILE_MAP_CAP:
+            break
+
+        # Expand the glob rooted at repo_path.
+        # Using glob.glob with root_dir for Python 3.10+, or manual join for older.
+        try:
+            matched = glob.glob(glob_pattern, root_dir=repo_path, recursive=True)
+        except TypeError:
+            # Python < 3.10: root_dir not supported; fall back to os.path.join
+            full_pattern = os.path.join(repo_path, glob_pattern)
+            matched_full = glob.glob(full_pattern, recursive=True)
+            # Convert back to repo-relative
+            matched = []
+            for mf in matched_full:
+                try:
+                    rel = os.path.relpath(mf, repo_path)
+                    matched.append(rel)
+                except ValueError:
+                    pass
+
+        for rel in sorted(matched):
+            if count >= _FILE_MAP_CAP:
+                break
+            if rel in seen_relpaths:
+                continue
+
+            abs_path = os.path.join(repo_path, rel)
+
+            # Confinement + exclusion filter (§2.2)
+            # 1. Must be a regular file (not dir, FIFO, socket)
+            if not os.path.isfile(abs_path):
+                continue
+            # 2. No symlinks
+            if os.path.islink(abs_path):
+                continue
+            # 3. No dot-path components (except .agent_tasks root)
+            if _is_dotpath(rel):
+                continue
+            # 4. Extension allowlist
+            _, ext = os.path.splitext(rel)
+            if ext.lower() not in _ALLOWED_EXTENSIONS:
+                continue
+            # 5. Secret-name denylist
+            if _is_secret_name(os.path.basename(rel)):
+                continue
+            # 6. Binary sniff
+            if _is_binary_sniff(abs_path):
+                continue
+            # 7. Realpath confinement (symlink-escape backstop)
+            if not _is_confined(abs_path, repo_path):
+                continue
+
+            # Survivor: assign stable opaque id
+            opaque_id = hashlib.sha256(rel.encode("utf-8")).hexdigest()[:16]
+
+            # Collision: first-glob-wins (skip if already assigned)
+            if opaque_id in file_map:
+                seen_relpaths.add(rel)
+                continue
+
+            label = label_fn(rel)
+            file_map[opaque_id] = (rel, category, label)
+            seen_relpaths.add(rel)
+            count += 1
+
+    return file_map
+
+
+# ---------------------------------------------------------------------------
 # Bash renderer invocation (Seam A — bash produces + escapes HTML)
 # ---------------------------------------------------------------------------
 
@@ -301,6 +565,15 @@ _TASK_VIEW_RE = re.compile(r"^/repo/([A-Za-z0-9_.~\-]+)/task/([A-Za-z0-9_.~\-]+)
 # B0: valid POST /repo/<name>/intake pattern — only active with --control.
 # <name> validated against server-side set-membership map (never filesystem-joined).
 _INTAKE_POST_RE = re.compile(r"^/repo/([A-Za-z0-9_.~\-]+)/intake$")
+
+# A2: GET /repo/<name>/files — the file listing page (taxonomy table).
+# <name> validated against server-side repo_name_map (set-membership only).
+_FILES_LIST_RE = re.compile(r"^/repo/([A-Za-z0-9_.~\-]+)/files$")
+
+# A2: GET /repo/<name>/file/<id> — view one file (opaque hex id only).
+# <id> must match [a-f0-9]{16}; even the regex rejects any traversal/encoding
+# before the double set-membership check (name ∈ repo_name_map, id ∈ file_map).
+_FILE_VIEW_RE = re.compile(r"^/repo/([A-Za-z0-9_.~\-]+)/file/([a-f0-9]{16})$")
 
 
 class _FleetHandler(http.server.BaseHTTPRequestHandler):
@@ -402,6 +675,59 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
             # (task_id has passed the set-membership check and the regex character filter)
             task_dir = os.path.join(repo_path, ".agent_tasks", task_id)
             body = self._render_task(repo_name, repo_path, task_id, task_dir)
+            self._send_html(body)
+            return
+
+        # Route: GET /repo/<name>/file/<id>  (A2 — check BEFORE /repo/<name>)
+        # A2 double set-membership:
+        #   1. <name> must be in self.repo_name_map
+        #   2. <id> must be in that repo's file map (built server-side from trusted repo_path)
+        # NO byte of the URL id is ever joined onto a filesystem path.
+        mf = _FILE_VIEW_RE.match(raw_path)
+        if mf:
+            repo_name = urllib.parse.unquote(mf.group(1))
+            file_id   = mf.group(2)  # already [a-f0-9]{16} by regex
+
+            # Check 1: repo name in server-side repo set
+            if repo_name not in self.repo_name_map:
+                self._send_404()
+                return
+
+            repo_path = self.repo_name_map[repo_name]
+
+            # Check 2: file id in that repo's file map (set-membership — NOT a path lookup)
+            file_map = _discover_files_for_repo(repo_path)
+            if file_id not in file_map:
+                self._send_404()
+                return
+
+            rel, category, label = file_map[file_id]
+
+            # abs_path is built from the TRUSTED repo_path + SERVER-GENERATED rel
+            # (file_id is used only as a dict key — never joined onto a path)
+            abs_path = os.path.join(repo_path, rel)
+
+            # FINAL belt-and-suspenders confinement re-check (§2.1) before any read
+            if not _is_confined(abs_path, repo_path):
+                self._send_404()
+                return
+
+            body = self._render_file_view(repo_name, repo_path, rel, abs_path, label)
+            self._send_html(body)
+            return
+
+        # Route: GET /repo/<name>/files  (A2 — check BEFORE /repo/<name>)
+        # <name> validated against server-side repo_name_map (set-membership only).
+        mfl = _FILES_LIST_RE.match(raw_path)
+        if mfl:
+            repo_name = urllib.parse.unquote(mfl.group(1))
+
+            if repo_name not in self.repo_name_map:
+                self._send_404()
+                return
+
+            repo_path = self.repo_name_map[repo_name]
+            body = self._render_file_list(repo_name, repo_path)
             self._send_html(body)
             return
 
@@ -658,6 +984,68 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
             f"{_sh_quote(repo_name)} "
             f"{_sh_quote(task_id)} "
             f"{_sh_quote(task_dir)}"
+        )
+        return _run_bash_renderer(self.massoh_home, [func_call])
+
+    def _render_file_list(self, repo_name: str, repo_path: str) -> bytes:
+        """
+        A2: Render the /repo/<name>/files listing page.
+        Builds the server-side file map, converts it to a TSV, and delegates
+        all HTML rendering + escaping to bash (_fleet_render_file_list).
+        No byte of any URL is used here — repo_path comes from the trusted server-side map.
+        Seam A: bash produces + escapes all HTML (N4).
+        """
+        file_map = _discover_files_for_repo(repo_path)
+
+        # Build a TSV: opaque_id<TAB>category<TAB>label<TAB>relpath per line.
+        # Passed as a single quoted argv element to bash.
+        tsv_lines = []
+        for fid, (rel, cat, label) in file_map.items():
+            # Sanitize for TSV: strip tabs and newlines from each field.
+            safe_fid   = fid.replace("\t", "").replace("\n", "")
+            safe_cat   = cat.replace("\t", "").replace("\n", "")
+            safe_label = label.replace("\t", " ").replace("\n", " ")
+            safe_rel   = rel.replace("\t", "").replace("\n", "")
+            tsv_lines.append(f"{safe_fid}\t{safe_cat}\t{safe_label}\t{safe_rel}")
+
+        map_tsv = "\n".join(tsv_lines)
+
+        func_call = (
+            f"_fleet_render_file_list "
+            f"{_sh_quote(repo_path)} "
+            f"{_sh_quote(repo_name)} "
+            f"{_sh_quote(map_tsv)}"
+        )
+        return _run_bash_renderer(self.massoh_home, [func_call])
+
+    def _render_file_view(
+        self, repo_name: str, repo_path: str, rel: str, abs_path: str, label: str
+    ) -> bytes:
+        """
+        A2: Render the /repo/<name>/file/<id> view page.
+        abs_path is trusted (built from server-side map); never from the URL.
+        Reads at most MAX_VIEW_BYTES bytes, passes truncated flag to bash renderer.
+        Seam A: bash (_fleet_render_file_view) produces + escapes all HTML (N4).
+        File contents are passed to bash via abs_path argv (trusted); bash reads
+        with head -c cap and pipes through _board_html_escape.
+        """
+        # Determine if truncation is needed (read one extra byte to detect overflow)
+        truncated = 0
+        try:
+            file_size = os.path.getsize(abs_path)
+            if file_size > MAX_VIEW_BYTES:
+                truncated = 1
+        except OSError:
+            truncated = 0
+
+        func_call = (
+            f"_fleet_render_file_view "
+            f"{_sh_quote(repo_path)} "
+            f"{_sh_quote(repo_name)} "
+            f"{_sh_quote(rel)} "
+            f"{_sh_quote(abs_path)} "
+            f"{_sh_quote(label)} "
+            f"{_sh_quote(str(truncated))}"
         )
         return _run_bash_renderer(self.massoh_home, [func_call])
 
