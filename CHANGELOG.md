@@ -11,6 +11,18 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.27.1] - 2026-06-21
+
+### Fixed
+- **#17 (P0) — `test/run.sh` parallel-safety:** Eliminated all hard-coded `199xx`
+  test ports (`MOCK_PORT_18b/18c/18d/19a/20e`, literals `19998`/`19999`). Added a
+  shared `free_port()` helper at the top of `test/run.sh` (bind :0, read OS-assigned
+  port) that all mock-server tests now use; `_fs_free_port()` delegates to it (DRY).
+  T-FLN tests now run `fleet learn` from a per-run temp git repo (`$TMP/fln_host`)
+  so the `FLEET_LEARNINGS.proposed.md` write target is isolated per run, not shared
+  at `$REPO_ROOT/agent-project/`. Two concurrent `bash test/run.sh` runs now both
+  pass ALL GREEN (685 checks each). Product code diff = 0.
+
 ## [0.27.0] - 2026-06-21
 
 ### Fixed

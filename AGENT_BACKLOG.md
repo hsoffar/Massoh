@@ -95,9 +95,10 @@ slices 2+), Fleet layer (slices 3–4: cross-repo lessons pool → engine self-c
 | 14 | P3 | Fix verb load-order fragility — lib/verbs/_config.sh sorts after board.sh in UTF-8; source helpers explicitly or LC_COLLATE=C before the glob | TODO |
 | 15 | P1 | bats inline-copy drift — test/run.sh SR_HELPER duplicates manifest_schema_ver(); extract a sourceable helper or add cross-ref guard | **DONE** — PR #30 (drift guard) |
 | 16 | P3 | Full bats port — migrate remaining test/run.sh sections to bats once test suite is split per-verb (deferred from #12) | TODO |
-| 17 | P0 | test/run.sh not parallel-safe — concurrent runs collide on shared $TMP/HOME/doctor-network state (2 spurious fails observed); isolate per-run tmp or document single-run-only | TODO |
+| 17 | P0 | test/run.sh not parallel-safe — concurrent runs collide on shared $TMP/HOME/doctor-network state (2 spurious fails observed); isolate per-run tmp or document single-run-only | **DONE** — v0.27.1 free_port() + FLN_HOST_REPO; concurrent 685+685 all green |
 | 18 | P3 | T-FLN-6a idempotency test fragile — compares raw md5 of FLEET_LEARNINGS but file embeds a Generated: timestamp; compare with the Generated line stripped | TODO |
 | 19 | P3 | Dashboard repo/task routes 404 until restart — repo-name map built at server startup, but the index re-discovers per request; routes should rediscover per request (or document restart-after-fleet-conf | **DONE** — v0.27.0 per-request rebuild via `_get_repo_name_map()` |
 | 20 | P1 | Repo page task list doesn't link to the /repo/<name>/task/<id> drill-down — add hrefs so drill-down is clickable, not URL-only | **DONE** — v0.27.0 `_fleet_render_task_list` adds `<a href=...>` |
 | 21 | P3 | Dashboard test teardown uses broad pkill -f massoh-dashboard — kills a user's running dashboard during test runs; scope cleanup to the test's own PID/port | **DONE** — v0.27.0 audited; T-FS-A3-4 static guard + T-FS-A3-5 sentinel test |
 | 22 | P3 | Dashboard `_render_repo` runs per-request discovery 3× per `/repo/<name>` GET (do_GET local + sibling-nav + render) — cache the per-request map in one place and pass it down; cheap at current fleet size, optimize before large fleets | TODO |
+| 23 | P3 | review unused code | TODO |

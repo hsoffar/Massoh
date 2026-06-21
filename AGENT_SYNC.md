@@ -4,14 +4,16 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-21 (Control plane — **read-only surface COMPLETE + hardened; dashboard LIVE on v0.27.0** at 127.0.0.1:8787 with `--control` (Massoh+elard): KPI/ops panels + task drill-down + **file browser** + auth-gated **intake button**. A3 hardening MERGED PR #42 v0.27.0 (clickable task links #20, per-request repo map #19, no-broad-pkill #21); suite 685 green. Remaining: tiers b/c (write/exec) need owner sign-off. [Earlier: A2 file browser PR #40 v0.26.0; B0 intake PR #37 v0.25.0; A1 ops panels PR #36 v0.24.0.])
+Last updated: 2026-06-21 (#17 P0 parallel-safety — `test/run.sh` now fully parallel-safe: free_port() helper + T-FLN isolation; 685/685 green concurrent; v0.27.1 on branch `fix/test-parallel-safety`; routing to massoh-reviewer-qa. [Earlier: Control plane A3 hardening MERGED PR #42 v0.27.0; dashboard LIVE at 127.0.0.1:8787 with `--control`; A2 file browser PR #40 v0.26.0; B0 intake PR #37 v0.25.0; A1 ops panels PR #36 v0.24.0.])
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**None active — Control plane read-only surface COMPLETE + hardened; dashboard live on v0.27.0.**
+**#17 P0 test parallel-safety — branch `fix/test-parallel-safety`; 685/685 green concurrent; routing to massoh-reviewer-qa for v0.27.1 merge.**
+
+**Last completed:** Control plane read-only surface COMPLETE + hardened; dashboard live on v0.27.0.
 The fleet dashboard at **http://127.0.0.1:8787/** (Massoh + elard) has the full read surface + the one
 authorized write, all live-verified on v0.27.0:
 - **Read (Track A):** fleet KPI index + per-repo views (queue/cron/workflow panels) + task drill-down
@@ -139,6 +141,7 @@ v0.27.0, suite 685 green. Loopback-only / read-only-except-intake throughout.
 | 2026-06-21 | Control plane **A2 file browser: MERGED PR #40 → main `a868524`, VERSION 0.26.0** (squash). `GET /repo/<name>/files` (grouped list) + `GET /repo/<name>/file/<id>` (read-only escaped view) live. Dashboard **restarted on v0.26.0 with `--control`** (PID-scoped kill of old 8787, no broad pkill) at 127.0.0.1:8787. Smoke-verified live: files list 200 (176 files on Massoh), known id → 200 (escaped `<pre>`), traversal/non-hex/unknown ids → 404, elard files list 200, intake form intact, unauth POST → 403. Last big read-only control-plane piece shipped. | owner |
 | 2026-06-21 | Control plane **A3 dashboard hardening: APPROVE** — #20 clickable task hrefs (href+200 reproduced live); #19 per-request rediscovery (post-launch repo 404→200 reproduced, no restart); #21 no-broad-pkill (zero executable matches, sentinel survived); no-path-from-URL STILL HOLDS after per-request refactor (7 traversal attacks → 404); 685/685 green (independently run); 8787 survived; scope clean; bin/massoh+manifest diff=0; AGENT_BACKLOG #19/#20/#21 DONE (Status cell only). Ready to auto-merge. | reviewer-qa |
 | 2026-06-21 | Control plane **A3 dashboard hardening: MERGED PR #42 → main `9956214`, VERSION 0.27.0** (squash). Bugs #19/#20/#21 fixed. Dashboard **restarted on v0.27.0 with `--control`** (PID-scoped). Live-verified: GET 200; task link `href="/repo/Massoh/task/…"` → GET 200; file browser + intake intact; file & task traversal → 404; unauth POST → 403; startup banner confirms "map rebuilt per-request". Read-only control-plane surface complete + hardened. NB-1 filed (inbox #22: `_render_repo` does per-request discovery 3×/GET — cheap, optimize later). | owner |
+| 2026-06-21 | **#17 P0 test parallel-safety: IMPLEMENTED** — `test/run.sh` fully parallel-safe: (1) `free_port()` helper hoisted to top; all 7 hard-coded `199xx` ports replaced with `$(free_port)` (grep proof: zero matches); (2) T-FLN `fleet learn` isolated to per-run `$TMP/fln_host` git repo (no shared `REPO_ROOT/agent-project/FLEET_LEARNINGS.proposed.md` write); `_fs_free_port()` delegates to `free_port()` (DRY). Proof: `bash test/run.sh & bash test/run.sh & wait` → BOTH 685/685 green. VERSION 0.27.1; product code diff=0; 8787 still 200. Branch `fix/test-parallel-safety` → routing to massoh-reviewer-qa. | implementer |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -179,6 +182,40 @@ None.
 | TASK-2026-06-21-control-plane A3 | 06_review_result | APPROVE — all conditions verified (06_A3_review.md); #20 href+200 reproduced live (ephemeral port, href="/repo/Massoh/task/TASK-2026-06-16-massoh-autonomous-fleet" → 200; id escaped in both href+text); #19 post-launch-repo-resolves reproduced (before=404 after-TSV-append=200, no restart); no-path-from-URL STILL HOLDS after per-request refactor (structural + live: 7 traversal attacks → 404 on ephemeral port 50303); #21 no-broad-pkill grep confirmed zero executable matches; sentinel survived; 685/685 green (independently run); 8787 alive before+after suite+reviewer tests; scope 8 files (lib/verbs/fleet.sh, scripts/massoh-dashboard, test/run.sh, VERSION, CHANGELOG, AGENT_BACKLOG, AGENT_SYNC, 05_handoff); bin/massoh+manifest.yml+NON_NEGOTIABLES diff=0; AGENT_BACKLOG rows 19/20/21 Status→DONE (cells only, rows intact); NB-1 triple _get_repo_name_map() call per /repo/<name> GET (non-blocking); NB-2 T-FS-A3-4 filter relies on 'grep' keyword for continuation line (correct, non-blocking). Ready to auto-merge. |
 
 ## Last handoff
+```
+Agent: massoh-implementer
+Mode: IMPLEMENTATION
+Task: #17 P0 — test/run.sh parallel-safety (v0.27.1)
+Status: DONE. 05_A4_handoff.md written. 685/685 green single + concurrent.
+Branch: fix/test-parallel-safety
+
+Decision: IMPLEMENTATION COMPLETE. All conditions from 04_A4-test-parallel-safety.md met.
+Next: massoh-reviewer-qa → verify 10 conditions in 05_A4_handoff.md → merge.
+
+  Port fix proof:
+    grep -nE ':199[0-9][0-9]|=199[0-9][0-9]' test/run.sh → zero output (0 hard-coded ports).
+    7 ports now dynamic: MOCK_PORT_UNREACHABLE_A/B, MOCK_PORT_18b/18c/18d/19a/20e.
+    free_port() defined at top (after newcc()), _fs_free_port() delegates to it.
+
+  FLN isolation proof:
+    FLN_HOST_REPO=$TMP/fln_host (temp git repo); all 8 fleet learn calls use cd "$FLN_HOST_REPO".
+    FLEET_LEARN_FILE=$TMP/fln_host/agent-project/FLEET_LEARNINGS.proposed.md (no REPO_ROOT write).
+
+  Concurrent proof:
+    bash test/run.sh & bash test/run.sh & wait → BOTH 685/685 ALL GREEN (exit 0).
+
+  Single-run proof:
+    bash test/run.sh → 685/685 ALL GREEN.
+
+  Product diff=0:
+    git diff main -- bin/massoh manifest.yml lib scripts agent-os policies templates → empty.
+
+  8787 status: curl http://127.0.0.1:8787/ → 200.
+
+  Scope: 4 files (test/run.sh, VERSION 0.27.1, CHANGELOG [0.27.1], AGENT_BACKLOG #17→DONE).
+```
+
+## Previous handoff (A3 dashboard hardening, v0.27.0)
 ```
 Agent: massoh-reviewer-qa
 Mode: REVIEW_QA

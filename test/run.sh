@@ -16,6 +16,24 @@ check(){ if eval "$2"; then ok "$1"; else bad "$1 [$2]"; fi; }
 
 newcc() { mktemp -d "$TMP/cc.XXXXXX"; }   # throwaway CLAUDE_CONFIG_DIR
 
+# ---------------------------------------------------------------------------
+# free_port — allocate a free ephemeral TCP port for mock servers.
+# Rule: ALL port-using tests MUST call free_port() — never hard-code 199xx.
+# Bind :0, read the OS-assigned port, close. Two concurrent test/run.sh runs
+# each get distinct OS-assigned ports, eliminating "Address already in use"
+# collisions on shared CI runners (issue #17, parallel-safety).
+# ---------------------------------------------------------------------------
+free_port() {
+  python3 -c "
+import socket, sys
+s = socket.socket()
+s.bind(('127.0.0.1', 0))
+p = s.getsockname()[1]
+s.close()
+print(p)
+" 2>/dev/null || echo 0
+}
+
 echo "== T1: install / status / doctor =="
 CC="$(newcc)"
 CLAUDE_CONFIG_DIR="$CC" "$MASSOH" install >/dev/null 2>&1
@@ -1271,6 +1289,17 @@ mktask() {
   true
 }
 
+# Allocate free ports for all T17–T23 mock servers (parallel-safety fix #17).
+# Each free_port() call binds :0 so the OS assigns a distinct port — two concurrent
+# test/run.sh runs never collide.
+MOCK_PORT_UNREACHABLE_A="$(free_port)"  # T17b, T17c — closed port (curl-fail degrade)
+MOCK_PORT_UNREACHABLE_B="$(free_port)"  # T18a, T23a, T23b — closed port (connect-refused)
+MOCK_PORT_18b="$(free_port)"            # T18b — mock returns 201
+MOCK_PORT_18c="$(free_port)"            # T18c — mock returns 500
+MOCK_PORT_18d="$(free_port)"            # T18d — accepts but never replies
+MOCK_PORT_19a="$(free_port)"            # T19a — mock returns 201 (append-only idempotency)
+MOCK_PORT_20e="$(free_port)"            # T20e — mock captures POST body (priority field)
+
 # T17a — token absent: exit 1, prints missing var names, writes nothing.
 BT17a="$TMP/bt17a"; mkboardrepo "$BT17a"; mktask "$BT17a" "TASK-17a"
 rc17a=0
@@ -1292,7 +1321,7 @@ SENTINEL_TOKEN="TEST_TOKEN_SENTINEL_XYZ987"
 rc17b=0
 out17b="$(cd "$BT17b" && \
   PLANE_API_TOKEN="$SENTINEL_TOKEN" \
-  PLANE_BASE_URL="http://127.0.0.1:19998" \
+  PLANE_BASE_URL="http://127.0.0.1:$MOCK_PORT_UNREACHABLE_A" \
   PLANE_WORKSPACE_SLUG="ws" \
   PLANE_PROJECT_ID="proj" \
   PLANE_ALLOW_HTTP=1 \
@@ -1306,14 +1335,14 @@ BT17c="$TMP/bt17c"; mkboardrepo "$BT17c"
 # No .gitignore entry yet — run board (no tasks → degrades cleanly)
 rc17c=0
 ( cd "$BT17c" && \
-  PLANE_API_TOKEN="tok" PLANE_BASE_URL="http://127.0.0.1:19998" \
+  PLANE_API_TOKEN="tok" PLANE_BASE_URL="http://127.0.0.1:$MOCK_PORT_UNREACHABLE_A" \
   PLANE_WORKSPACE_SLUG="ws" PLANE_PROJECT_ID="pid" PLANE_ALLOW_HTTP=1 \
   "$MASSOH" board --push plane >/dev/null 2>&1 ) || rc17c=$?
 check "T17c .env.massoh in .gitignore after first board run" \
   "grep -qxF '.env.massoh' '$BT17c/.gitignore'"
 # Run again: idempotent — .env.massoh must appear exactly once
 ( cd "$BT17c" && \
-  PLANE_API_TOKEN="tok" PLANE_BASE_URL="http://127.0.0.1:19998" \
+  PLANE_API_TOKEN="tok" PLANE_BASE_URL="http://127.0.0.1:$MOCK_PORT_UNREACHABLE_A" \
   PLANE_WORKSPACE_SLUG="ws" PLANE_PROJECT_ID="pid" PLANE_ALLOW_HTTP=1 \
   "$MASSOH" board --push plane >/dev/null 2>&1 ) || true
 count_env_massoh="$(grep -cxF '.env.massoh' "$BT17c/.gitignore" 2>/dev/null || true)"
@@ -1343,7 +1372,7 @@ echo "== T18: cmd_board — outbound network degrade =="
 BT18a="$TMP/bt18a"; mkboardrepo "$BT18a"; mktask "$BT18a" "TASK-18a"
 rc18a=0
 out18a="$(cd "$BT18a" && \
-  PLANE_API_TOKEN="tok" PLANE_BASE_URL="http://127.0.0.1:19999" \
+  PLANE_API_TOKEN="tok" PLANE_BASE_URL="http://127.0.0.1:$MOCK_PORT_UNREACHABLE_B" \
   PLANE_WORKSPACE_SLUG="ws" PLANE_PROJECT_ID="pid" PLANE_ALLOW_HTTP=1 \
   "$MASSOH" board --push plane 2>&1)" || rc18a=$?
 check "T18a unreachable Plane: exit 0" "[ $rc18a -eq 0 ]"
@@ -1360,7 +1389,7 @@ mktask "$BT18b" "TASK-18b-fail"
 
 # Build a mock HTTP server that returns 201 with a fake issue JSON for POST requests.
 # We use nc (netcat) in a loop or python3. Prefer python3 for reliability.
-MOCK_PORT_18b=19901
+# MOCK_PORT_18b is allocated dynamically via free_port() before this section (parallel-safety #17).
 
 # Start a mock server: accepts POST, always returns 201 with a fake issue id.
 # For simplicity in this test, use a single-response server per task (sequential).
@@ -1418,8 +1447,8 @@ rows18b="$(wc -l < "$BT18b/.agent_tasks/.board-map.tsv" 2>/dev/null || echo 0)"
 check "T18b two tasks → two map rows" "[ \"$rows18b\" -eq 2 ]"
 
 # T18c — single task, mock returns 500: no map row written.
+# MOCK_PORT_18c is allocated dynamically via free_port() before this section (parallel-safety #17).
 BT18c="$TMP/bt18c"; mkboardrepo "$BT18c"; mktask "$BT18c" "TASK-18c"
-MOCK_PORT_18c=19902
 
 python3 -c "
 import http.server, json, sys, signal
@@ -1452,8 +1481,8 @@ check "T18c 500 response: no .board-map.tsv row written" \
 
 # T18d — curl timeout does not hang indefinitely.
 # Connect to a port that accepts but never responds (use python3 accepting but not replying).
+# MOCK_PORT_18d is allocated dynamically via free_port() before this section (parallel-safety #17).
 BT18d="$TMP/bt18d"; mkboardrepo "$BT18d"; mktask "$BT18d" "TASK-18d"
-MOCK_PORT_18d=19903
 
 python3 -c "
 import socket, time, signal, sys
@@ -1487,7 +1516,7 @@ echo "== T19: cmd_board — local write surfaces =="
 # T19a — .board-map.tsv append-only: two runs with same 2 tasks → exactly 2 rows (no dup).
 BT19a="$TMP/bt19a"; mkboardrepo "$BT19a"
 mktask "$BT19a" "TASK-19a-1"; mktask "$BT19a" "TASK-19a-2"
-MOCK_PORT_19a=19904
+# MOCK_PORT_19a is allocated dynamically via free_port() before this section (parallel-safety #17).
 
 python3 -c "
 import http.server, json, signal, sys
@@ -1600,7 +1629,7 @@ check "T20d empty task dir: prints 'no tasks'" \
 BT20e="$TMP/bt20e"; mkboardrepo "$BT20e"
 mktask "$BT20e" "TASK-20e-p0"
 printf '| # | Pri | Item | Why | Status |\n|---|---|---|---|---|\n| 1 | P0 | TASK-20e-p0 | urgent thing | TODO |\n' > "$BT20e/AGENT_BACKLOG.md"
-MOCK_PORT_20e=19905
+# MOCK_PORT_20e is allocated dynamically via free_port() before this section (parallel-safety #17).
 
 # Capture the POST body to verify priority field
 CAPTURED_BODY_20e="$TMP/body20e.json"
@@ -1713,7 +1742,7 @@ echo "== T23: cmd_board — || true discipline and degrade =="
 BT23a="$TMP/bt23a"; mkboardrepo "$BT23a"
 rc23a=0
 ( cd "$BT23a" && \
-  PLANE_API_TOKEN="tok" PLANE_BASE_URL="http://127.0.0.1:19999" \
+  PLANE_API_TOKEN="tok" PLANE_BASE_URL="http://127.0.0.1:$MOCK_PORT_UNREACHABLE_B" \
   PLANE_WORKSPACE_SLUG="ws" PLANE_PROJECT_ID="pid" PLANE_ALLOW_HTTP=1 \
   "$MASSOH" board --push plane >/dev/null 2>&1 ) || rc23a=$?
 check "T23a zero TASK-* dirs: exit 0 (degrade + || true discipline)" "[ $rc23a -eq 0 ]"
@@ -1724,7 +1753,7 @@ mktask "$BT23b" "TASK-23b"
 rm -f "$BT23b/AGENT_BACKLOG.md"
 rc23b=0
 ( cd "$BT23b" && \
-  PLANE_API_TOKEN="tok" PLANE_BASE_URL="http://127.0.0.1:19999" \
+  PLANE_API_TOKEN="tok" PLANE_BASE_URL="http://127.0.0.1:$MOCK_PORT_UNREACHABLE_B" \
   PLANE_WORKSPACE_SLUG="ws" PLANE_PROJECT_ID="pid" PLANE_ALLOW_HTTP=1 \
   "$MASSOH" board --push plane >/dev/null 2>&1 ) || rc23b=$?
 check "T23b missing AGENT_BACKLOG.md: exit 0 (|| true degrade)" "[ $rc23b -eq 0 ]"
@@ -3163,17 +3192,8 @@ echo "== T-FS: massoh fleet serve skeleton =="
 DASHBOARD="$REPO_ROOT/scripts/massoh-dashboard"
 
 # Helper: find a free ephemeral port (avoids CI collisions).
-# Tries to bind :0, reads the assigned port, closes immediately.
-_fs_free_port() {
-  python3 -c "
-import socket, sys
-s = socket.socket()
-s.bind(('127.0.0.1', 0))
-p = s.getsockname()[1]
-s.close()
-print(p)
-" 2>/dev/null || echo 0
-}
+# Delegates to the shared free_port() defined at the top of this file (DRY).
+_fs_free_port() { free_port; }
 
 FS_PORT="$(_fs_free_port)"
 FS_PID=""
@@ -4294,6 +4314,16 @@ echo "== B-PILOT done =="
 # ===========================================================================
 echo "== T-FLN: massoh fleet learn (slice 3, v0.23.0) =="
 
+# Parallel-safety (#17): fleet learn --write-proposals resolves its write target via
+# "git rev-parse --show-toplevel" of the CWD, so running from $REPO_ROOT would write
+# to the shared agent-project/ directory — causing race conditions with concurrent test
+# runs. Instead, all fleet learn invocations in T-FLN run from a per-run temp git repo
+# ($FLN_HOST_REPO in $TMP). FLEET_LEARN_FILE points into that temp tree, not REPO_ROOT.
+FLN_HOST_REPO="$TMP/fln_host"
+mkdir -p "$FLN_HOST_REPO/agent-project"
+( cd "$FLN_HOST_REPO" && git init -q && git config user.email t@t && git config user.name t )
+FLEET_LEARN_FILE="$FLN_HOST_REPO/agent-project/FLEET_LEARNINGS.proposed.md"
+
 # Helper: create a minimal Massoh repo with a .massoh marker (no git needed for proposals)
 mkfleetrepo() {
   local d="$1"
@@ -4336,11 +4366,11 @@ write_learnings "$FLN1_ROOT/gamma" "gamma-only lesson unique"
 
 # Run fleet learn with --write-proposals; capture stdout to a temp file to avoid quoting issues
 FLN1_STDOUT="$TMP/fln1_stdout.txt"
-MASSOH_FLEET_ROOT="$FLN1_ROOT" \
-  "$MASSOH" fleet learn --write-proposals >"$FLN1_STDOUT" 2>&1 || true
+( cd "$FLN_HOST_REPO" && MASSOH_FLEET_ROOT="$FLN1_ROOT" \
+  "$MASSOH" fleet learn --write-proposals >"$FLN1_STDOUT" 2>&1 ) || true
 
-# The write goes to this repo's agent-project/ — check stdout + file contain both tags
-FLEET_LEARN_FILE="$REPO_ROOT/agent-project/FLEET_LEARNINGS.proposed.md"
+# Write target is $FLN_HOST_REPO (isolated per-run $TMP, not the shared REPO_ROOT)
+# FLEET_LEARN_FILE is set above (before T-FLN-1) pointing into $FLN_HOST_REPO.
 check "T-FLN-1a overlap lesson tagged [generalizable-candidate] in stdout" \
   "grep -q 'generalizable-candidate' '$FLN1_STDOUT'"
 check "T-FLN-1b single-repo lesson tagged [project:] in stdout" \
@@ -4366,7 +4396,7 @@ write_learnings "$FLN2_ROOT/repo-y" "lesson from repo-y about safety" "lesson fr
 fln2_snap_x_before="$(find "$FLN2_ROOT/repo-x" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}')"
 fln2_snap_y_before="$(find "$FLN2_ROOT/repo-y" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}')"
 
-MASSOH_FLEET_ROOT="$FLN2_ROOT" "$MASSOH" fleet learn --write-proposals >/dev/null 2>&1 || true
+( cd "$FLN_HOST_REPO" && MASSOH_FLEET_ROOT="$FLN2_ROOT" "$MASSOH" fleet learn --write-proposals >/dev/null 2>&1 ) || true
 
 fln2_snap_x_after="$(find "$FLN2_ROOT/repo-x" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}')"
 fln2_snap_y_after="$(find "$FLN2_ROOT/repo-y" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}')"
@@ -4389,7 +4419,7 @@ fln3_snap_noprops_before="$(find "$FLN3_ROOT/no-props" -type f | sort | xargs md
 
 rc_fln3=0
 FLN3_STDOUT="$TMP/fln3_stdout.txt"
-MASSOH_FLEET_ROOT="$FLN3_ROOT" "$MASSOH" fleet learn --write-proposals >"$FLN3_STDOUT" 2>&1 || rc_fln3=$?
+( cd "$FLN_HOST_REPO" && MASSOH_FLEET_ROOT="$FLN3_ROOT" "$MASSOH" fleet learn --write-proposals >"$FLN3_STDOUT" 2>&1 ) || rc_fln3=$?
 
 check "T-FLN-3a no-proposals repo: exit 0" "[ $rc_fln3 -eq 0 ]"
 check "T-FLN-3b no-proposals repo: [skip] in output" \
@@ -4420,7 +4450,7 @@ fln4_snap_before_templates="$(find "$REPO_ROOT/templates" -type f | sort | xargs
 # Byte-snapshot of discovered fake repo before run
 fln4_snap_before_fakerepo="$(find "$FLN4_ROOT/eng-repo" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}' || true)"
 
-MASSOH_FLEET_ROOT="$FLN4_ROOT" "$MASSOH" fleet learn --write-proposals >/dev/null 2>&1 || true
+( cd "$FLN_HOST_REPO" && MASSOH_FLEET_ROOT="$FLN4_ROOT" "$MASSOH" fleet learn --write-proposals >/dev/null 2>&1 ) || true
 
 # Snapshot engine paths after run
 fln4_snap_after_verbs="$(find "$REPO_ROOT/lib/verbs" -type f | sort | xargs md5sum 2>/dev/null | md5sum | awk '{print $1}' || true)"
@@ -4464,10 +4494,10 @@ mkfleetroot "$FLN6_ROOT" r1 r2
 write_learnings "$FLN6_ROOT/r1" "idempotent test lesson about guards" "r1-only unique lesson"
 write_learnings "$FLN6_ROOT/r2" "idempotent test lesson about guards" "r2-only unique lesson"
 
-MASSOH_FLEET_ROOT="$FLN6_ROOT" "$MASSOH" fleet learn --write-proposals >/dev/null 2>&1 || true
+( cd "$FLN_HOST_REPO" && MASSOH_FLEET_ROOT="$FLN6_ROOT" "$MASSOH" fleet learn --write-proposals >/dev/null 2>&1 ) || true
 fln6_md5_run1="$(md5sum "$FLEET_LEARN_FILE" 2>/dev/null | awk '{print $1}' || true)"
 
-MASSOH_FLEET_ROOT="$FLN6_ROOT" "$MASSOH" fleet learn --write-proposals >/dev/null 2>&1 || true
+( cd "$FLN_HOST_REPO" && MASSOH_FLEET_ROOT="$FLN6_ROOT" "$MASSOH" fleet learn --write-proposals >/dev/null 2>&1 ) || true
 fln6_md5_run2="$(md5sum "$FLEET_LEARN_FILE" 2>/dev/null | awk '{print $1}' || true)"
 
 check "T-FLN-6a two runs produce identical md5 (Pattern A: sentinel-regenerate)" \
@@ -4485,7 +4515,7 @@ write_learnings "$FLN7_ROOT/qa-repo" "a lesson that should not write file"
 rm -f "$FLEET_LEARN_FILE"
 
 FLN7_STDOUT="$TMP/fln7_stdout.txt"
-MASSOH_FLEET_ROOT="$FLN7_ROOT" "$MASSOH" fleet learn >"$FLN7_STDOUT" 2>&1 || true
+( cd "$FLN_HOST_REPO" && MASSOH_FLEET_ROOT="$FLN7_ROOT" "$MASSOH" fleet learn >"$FLN7_STDOUT" 2>&1 ) || true
 
 check "T-FLN-7a default (no --write-proposals): FLEET_LEARNINGS.proposed.md NOT created" \
   "[ ! -f '$FLEET_LEARN_FILE' ]"
@@ -4494,7 +4524,7 @@ check "T-FLN-7b default: stdout still contains candidate summary" \
 
 # --no-write also must not write
 rm -f "$FLEET_LEARN_FILE"
-MASSOH_FLEET_ROOT="$FLN7_ROOT" "$MASSOH" fleet learn --no-write >/dev/null 2>&1 || true
+( cd "$FLN_HOST_REPO" && MASSOH_FLEET_ROOT="$FLN7_ROOT" "$MASSOH" fleet learn --no-write >/dev/null 2>&1 ) || true
 check "T-FLN-7c --no-write: FLEET_LEARNINGS.proposed.md NOT created" \
   "[ ! -f '$FLEET_LEARN_FILE' ]"
 
@@ -4505,7 +4535,7 @@ mkfleetroot "$FLN8_ROOT" dirty-repo clean-repo
 write_learnings "$FLN8_ROOT/dirty-repo" "lesson with | pipe and \`backtick\` chars | more pipes"
 write_learnings "$FLN8_ROOT/clean-repo" "lesson with | pipe and \`backtick\` chars | more pipes"
 
-MASSOH_FLEET_ROOT="$FLN8_ROOT" "$MASSOH" fleet learn --write-proposals >/dev/null 2>&1 || true
+( cd "$FLN_HOST_REPO" && MASSOH_FLEET_ROOT="$FLN8_ROOT" "$MASSOH" fleet learn --write-proposals >/dev/null 2>&1 ) || true
 
 check "T-FLN-8a output file exists after sanitized lesson run" \
   "[ -f '$FLEET_LEARN_FILE' ]"
