@@ -4,27 +4,31 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-21 (Control plane — v0.23.0 deployed globally; dashboard live (Massoh+elard). **Track A:** A1 ops panels (queue/cron/workflow) MERGED PR #36 **v0.24.0**, suite 597. **Track B:** architect designed auth model; **owner SIGNATURE #1** ✓ → building **B0 intake button** (auth-gated POST→intake, --control default OFF). Tiers b/c (hooks/personality/restart/update) each need own sign-off. [Earlier: observability v0.20–0.23 PRs #31–#35; 24h queue v0.9–0.19.])
+Last updated: 2026-06-21 (Control plane — dashboard LIVE at 127.0.0.1:8787 **with `--control`** (Massoh+elard); B0 intake button working. **Track A:** A1 ops panels MERGED PR #36 **v0.24.0**. **Track B:** auth model + **owner SIGNATURE #1** ✓ → **B0 intake button MERGED PR #37 v0.25.0** (auth-gated POST→intake, --control default OFF), suite 635. Tiers b/c (personality/hooks/restart/update) each need own sign-off. [Earlier: observability v0.20–0.23 PRs #31–#35; 24h queue v0.9–0.19.])
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**None active — Fleet observability platform COMPLETE** (spec `agent-project/briefs/fleet-observability-spec.md`).
-`massoh fleet serve` ships a loopback-only, read-only observability dashboard: fleet index + per-repo
-KPI views (cost/cycle/rework/throughput from ledger+METRICS) + A↔B nav + task drill-down + a read-only
-start-task panel. `massoh fleet learn` produces de-identified cross-repo lesson **candidates** (never
-auto-promotes). PRs #31–#35, v0.23.0, suite 574 green; loopback/read-only/zero-spend throughout.
+**None active — Control plane B0 (intake button) SHIPPED; dashboard live with `--control`.**
+`massoh fleet serve --control` (default OFF) ships the first Track-B write: an auth-gated "Add idea"
+form (POST `/repo/<name>/intake`) behind two-lock fail-closed auth (same-origin + per-run capability
+token) + append-only audit. Dashboard is back up at **http://127.0.0.1:8787/** with the button working
+(token printed once to the launch terminal, auto-injected into the form). Track A read panels
+(queue/cron/workflow) + fleet KPI views + task drill-down all live; `massoh fleet learn` produces
+cross-repo lesson **candidates** (never auto-promotes). v0.25.0, suite 635 green.
 
 **PARKED FOR OWNER (need your decision/sign-off):**
-1. Live **POST start-task** submit from the browser (first HTTP→write; arch flagged as new risk class).
-2. Browser **"update master learning"** button (POST → fleet learn).
-3. **Engine adoption** of any `FLEET_LEARNINGS.proposed.md` candidate (gated; never auto).
-4. **Engine-extraction (#2)** — split the engine into its own repo (deferred by owner).
-5. Owner-optional: **deploy** v0.23.0 to `~/.claude` via `massoh update`; commit/gitignore `deck/`.
+1. Track A continuation: **A2 file browser** ("access each generated file + what is it"), **A3** tickets/polish.
+2. Track B **tier b** — agent personality + hooks (PROPOSE-ONLY `*.proposed` drafts; fresh sign-off each).
+3. Track B **tier c** — server restart + `massoh update` (EXEC; confirm + fresh sign-off; §6 for update).
+4. Browser **"update master learning"** button (POST → fleet learn); **engine adoption** of any
+   `FLEET_LEARNINGS.proposed.md` candidate (gated; never auto).
+5. **Engine-extraction (#2)** — split the engine into its own repo (deferred by owner).
+6. Owner-optional: **deploy** v0.25.0 to `~/.claude` via `massoh update` (currently ~/.claude is v0.23.0).
 
-**Last shipped:** Fleet slice 3 — `massoh fleet learn`. **Merged PR #35, VERSION 0.23.0**, suite 574 green.
+**Last shipped:** Control plane B0 — auth-gated intake button. **Merged PR #37, VERSION 0.25.0**, suite 635 green. (Housekeeping PR #38: dropped stray deck lockfile.)
 
 ## Open questions (owner decision needed)
 | Question | Raised | Context |
@@ -121,6 +125,8 @@ auto-promotes). PRs #31–#35, v0.23.0, suite 574 green; loopback/read-only/zero
 | 2026-06-21 | Control plane **track B: architect designed auth model** (per-run capability token in-memory + same-origin Origin/Referer, two-lock fail-closed; risk tiers a/b/c; audit log) → `01_B_design.md`. **Owner SIGNATURE #1** — signed off on the auth model + authorized building B0 (intake button, tier-a append-only, --control default OFF). Tiers b/c each need fresh per-action sign-off. | owner |
 | 2026-06-21 | Control plane **track A: A1 ops panels** (queue/tickets + cron-read-only + workflow) MERGED PR #36 → v0.24.0; reviewer-qa APPROVE; 597 green; GET-only/read-only/escaped. | owner |
 | 2026-06-21 | Control plane **B0 intake-button: APPROVE** — B1–B7 all independently verified (file:line refs in 06_B0_review.md); 635/635 green (independently run twice); 6 deny-403s + zero-write reproduced (missing-token, wrong-token, no-Origin, foreign-Origin, body-only-token, header-only-token); exec-array no-shell reproduced (marker NOT created, literal text stored); default-OFF reproduced (POST→404 without --control, no token in stdout); token-never-leaked (not in source files, not in audit log, exactly once in HTML hidden field); audit log complete (denied-origin, denied-token, denied-unknown-repo, ok all present; token value absent from every line); scope = 5 files (scripts/massoh-dashboard, lib/verbs/fleet.sh, test/run.sh, VERSION, CHANGELOG); bin/massoh+manifest.yml+NON_NEGOTIABLES diff=0; doctor healthy; tiers b/c not built. Ready to merge. | reviewer-qa |
+| 2026-06-21 | Control plane **B0 intake-button: MERGED PR #37 → main `33dcfa0`, VERSION 0.25.0** (squash). First Track-B write slice shipped: `massoh fleet serve --control` (default OFF) → auth-gated POST `/repo/<name>/intake`. Dashboard **restarted on the final build with `--control`** at 127.0.0.1:8787 (intake button live; token printed once to the launch terminal, auto-injected into the form's `_massoh_token` hidden field). Smoke-verified: GET 200, form present, unauth POST→403. Tiers b/c still PARKED (each needs fresh sign-off). | owner |
+| 2026-06-21 | Housekeeping: `git add -A` swept a stray LibreOffice lock `deck/.~lock.Massoh-pitch.pptx#` into #37; removed from tracking + gitignored `.~lock.*#` via **PR #38 → main `826f7ca`**. `deck/` (pitch deck + build_deck.js) now tracked — owner-optional cleanup item resolved (committed rather than ignored). | owner |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -209,6 +215,15 @@ Decision: APPROVE. All B1–B7 conditions independently verified. 635/635 green.
 Next recommended agent: orchestrator / commit + squash-merge PR → main (VERSION 0.25.0).
 Next action: Commit feat/fleet-intake-control, squash-merge PR → main.
              Tiers B1–B5 each await fresh owner sign-off per 01_B_design.md §7.
+
+DONE (owner/orchestrator, 2026-06-21):
+  Committed feat/fleet-intake-control (4a542ff) → PR #37 → squash-merged main 33dcfa0, VERSION 0.25.0.
+  Stray deck lockfile cleanup → PR #38 → main 826f7ca.
+  Dashboard RESTARTED on the final build with --control at http://127.0.0.1:8787/ (Massoh+elard):
+    GET / → 200; intake form present on /repo/<name>; unauth POST → 403 (fail-closed live).
+    Token printed once to the launch terminal; auto-injected into the form's _massoh_token hidden field.
+  Next: tiers b (personality/hooks — propose-only) + c (restart/update — exec) each await fresh sign-off;
+        Track A continues (A2 file browser, A3 tickets); deploy v0.25.0 to ~/.claude is owner-optional.
 ```
 
 ## [meta-engineer] 2026-06-19 — RMT proposal (TASK-2026-06-19-rmt)
