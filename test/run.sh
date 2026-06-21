@@ -2240,11 +2240,13 @@ check "T-PR-e secret key: warning emitted to stderr (PC4)" \
 check "T-PR-e secret key: returns default not file value (PC4)" \
   "[ \"\$eval_out_pre\" = 'mydefault' ]"
 
-# T-PR-f: Scope check — exactly 3 massoh_config_get call sites outside _config.sh.
+# T-PR-f: Scope check — massoh_config_get call sites outside _config.sh.
+# v0.28.0 adds 4 new call sites in bin/massoh-cron (decide-or-defer config keys);
+# previously 3 (cron_idle_min + 2 meta.sh), now 7 total.
 prf_count="$(grep -r 'massoh_config_get' "$REPO_ROOT/lib/verbs/" "$REPO_ROOT/bin/massoh-cron" \
   2>/dev/null | grep -v '_config.sh' | wc -l | tr -d ' ')"
-check "T-PR-f exactly 3 massoh_config_get call sites outside _config.sh (PC6)" \
-  "[ \"$prf_count\" -eq 3 ]"
+check "T-PR-f exactly 7 massoh_config_get call sites outside _config.sh (PC6, v0.28.0)" \
+  "[ \"$prf_count\" -eq 7 ]"
 
 # T-PR-g: Helper callable after sourcing the verb-loading loop (bin/massoh sources _config.sh).
 PRg="$TMP/prg"; mkcfgrepo "$PRg"
@@ -5133,6 +5135,533 @@ A3_SENTINEL_PID=""
 fi  # end: python3 available guard (T-FS-A3 tests)
 
 echo "== T-FS-A3 done =="
+
+# =============================================================================
+# T-AE: decide-or-defer subsystem (v0.28.0)
+# All tests use injectable MASSOH_NOW (fake clock) + fake agent/gate → zero-spend, deterministic.
+# =============================================================================
+echo "== T-AE: decide-or-defer (autonomy timed-escalation + plan-guard) =="
+
+CRON_AE="$REPO_ROOT/bin/massoh-cron"
+
+# Helper: create a minimal cron repo with a config.yml.
+# $1=dir, $2="on"|"off" (flag), $3=grace_min (opt, default 5), $4=spend_cap (opt, default 0)
+mkaerepo() {
+  local d="$1" flag="${2:-off}" grace="${3:-5}" spend_cap="${4:-0}"
+  mkdir -p "$d"
+  ( cd "$d" && git -c init.defaultBranch=main init -q && git config user.email t@t && git config user.name t )
+  { echo "# Backlog"; echo "## Queue"; echo "| # | Pri | Item | Why | Status |"; echo "|---|---|---|---|---|"
+    echo "| 1 | P1 | AE test item | why | TODO |"; } > "$d/AGENT_BACKLOG.md"
+  printf '# sync\n' > "$d/AGENT_SYNC.md"
+  echo x > "$d/.massoh"
+  mkdir -p "$d/agent-project"
+  # PRODUCT_STRATEGY.md with the canonical anchor section.
+  cat > "$d/agent-project/PRODUCT_STRATEGY.md" <<'PSTRAT'
+# PRODUCT_STRATEGY — Test
+
+## North-star / global goal (decided 2026-06-17)
+Test product strategy north-star for plan-guard tests.
+PSTRAT
+  # config.yml
+  cat > "$d/agent-project/config.yml" <<CFGYML
+cron_decide_or_defer: $flag
+cron_grace_min: $grace
+cron_notify_count: 2
+cron_spend_cap_usd: $spend_cap
+cron_idle_min: 25
+CFGYML
+  ( cd "$d" && git add -A && git commit -qm init )
+}
+
+# Helper: inject a decision record directly into decisions.queue.
+# Args: dir id open_ts item decision recommended reversible flag_dark never_auto est_spend plan_ref plan_rationale notices_sent deadline
+ae_inject_record() {
+  local d="$1" id="$2" open_ts="$3" item="$4" decision="$5" recommended="$6" \
+        reversible="$7" flag_dark="$8" never_auto="$9" est_spend="${10}" \
+        plan_ref="${11}" plan_rationale="${12}" notices_sent="${13}" deadline="${14}"
+  mkdir -p "$d/.agent_tasks/cron"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$id" "$open_ts" "$item" "$decision" "$recommended" \
+    "$reversible" "$flag_dark" "$never_auto" "$est_spend" \
+    "$plan_ref" "$plan_rationale" "$notices_sent" "$deadline" \
+    >> "$d/.agent_tasks/cron/decisions.queue"
+}
+
+# Fake agent for AE tests: commits a placeholder file (just needs to create a branch).
+FAKE_AE="$TMP/fakeagent_ae.sh"
+cat > "$FAKE_AE" <<'FAKEAE'
+#!/usr/bin/env bash
+echo "work" > agent-was-here.txt
+git add -A >/dev/null 2>&1 && git commit -qm "fake ae work" >/dev/null 2>&1 || true
+FAKEAE
+chmod +x "$FAKE_AE"
+
+# ---------------------------------------------------------------------------
+# T-AE-a: flag default OFF = byte-identical to pre-v0.28.0
+# With cron_decide_or_defer unset/off, massoh cron once output + side-effects
+# must NOT create NOTIFICATIONS.md / DECISIONS.md / decisions.queue.
+# ---------------------------------------------------------------------------
+echo "-- T-AE-a: flag-OFF byte-identical --"
+AEa="$TMP/ae_a"; mkaerepo "$AEa" "off"
+
+# Run with flag off (dry-run, idle check bypassed, flag=off).
+out_ae_a="$( cd "$AEa" && \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true \
+  "$CRON_AE" once --no-idle-check 2>&1 )"
+
+check "T-AE-a NOTIFICATIONS.md NOT created when flag=off" \
+  "[ ! -f '$AEa/NOTIFICATIONS.md' ]"
+check "T-AE-a DECISIONS.md NOT created when flag=off" \
+  "[ ! -f '$AEa/DECISIONS.md' ]"
+check "T-AE-a decisions.queue NOT created when flag=off" \
+  "[ ! -f '$AEa/.agent_tasks/cron/decisions.queue' ]"
+check "T-AE-a output still shows DRY-RUN (normal cron behavior preserved)" \
+  "echo '$out_ae_a' | grep -q 'DRY-RUN'"
+
+# Run mode with flag=off — also must not create the runtime files.
+AEa2="$TMP/ae_a2"; mkaerepo "$AEa2" "off"
+( cd "$AEa2" && \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+check "T-AE-a NOTIFICATIONS.md NOT created on run with flag=off" \
+  "[ ! -f '$AEa2/NOTIFICATIONS.md' ]"
+check "T-AE-a DECISIONS.md NOT created on run with flag=off" \
+  "[ ! -f '$AEa2/DECISIONS.md' ]"
+check "T-AE-a decisions.queue NOT created on run with flag=off" \
+  "[ ! -f '$AEa2/.agent_tasks/cron/decisions.queue' ]"
+check "T-AE-a flag=off: backlog item still marked DONE (cron runs normally)" \
+  "grep -q '| DONE |' '$AEa2/AGENT_BACKLOG.md'"
+
+# ---------------------------------------------------------------------------
+# T-AE-b: notify → twice → proceed (reversible+flag-dark+on-plan item)
+# Tick 1: emit #L1; Tick 2 (< deadline): emit #L2; Tick 3 (>= deadline): PROCEED + CLOSE.
+# Exactly 2 NOTIF level blocks, no 3rd, CLOSE status=PROCEEDED.
+# ---------------------------------------------------------------------------
+echo "-- T-AE-b: notify→twice→proceed (reversible) --"
+AEb="$TMP/ae_b"; mkaerepo "$AEb" "on" 5 0
+# Inject a reversible+flag-dark+on-plan record. Deadline = open_ts + 5*60 = open_ts + 300.
+AEb_OPEN=1000000
+AEb_DEADLINE=$(( AEb_OPEN + 300 ))  # 5 min grace
+AEb_ID="AESC-TEST-B-0001"
+ae_inject_record "$AEb" \
+  "$AEb_ID" "$AEb_OPEN" \
+  "AE test item" "Should we proceed?" "yes-proceed" \
+  "true" "true" "" "0" \
+  "PRODUCT_STRATEGY.md#north-star" "advances the north-star test goal" \
+  "0" "$AEb_DEADLINE"
+
+# Tick 1: now = open_ts + 1 (before deadline, 0 notices sent yet)
+( cd "$AEb" && MASSOH_NOW=$(( AEb_OPEN + 1 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-b tick1: NOTIF #L1 emitted" \
+  "grep -qF '## NOTIF ${AEb_ID}#L1' '$AEb/NOTIFICATIONS.md'"
+check "T-AE-b tick1: NOTIF #L2 NOT yet emitted" \
+  "! grep -qF '## NOTIF ${AEb_ID}#L2' '$AEb/NOTIFICATIONS.md'"
+check "T-AE-b tick1: AGENT_SYNC has [escalation] line" \
+  "grep -q '\[escalation\]' '$AEb/AGENT_SYNC.md'"
+
+# Tick 2: now = open_ts + 2 (still before deadline, 1 notice sent)
+( cd "$AEb" && MASSOH_NOW=$(( AEb_OPEN + 2 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-b tick2: NOTIF #L2 emitted" \
+  "grep -qF '## NOTIF ${AEb_ID}#L2' '$AEb/NOTIFICATIONS.md'"
+# No 3rd level should exist (notify_count=2).
+check "T-AE-b tick2: NO 3rd NOTIF level (idempotent, max 2)" \
+  "! grep -qF '## NOTIF ${AEb_ID}#L3' '$AEb/NOTIFICATIONS.md'"
+
+# Tick 3: now >= deadline → PROCEED
+( cd "$AEb" && MASSOH_NOW=$(( AEb_DEADLINE + 1 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-b tick3 (deadline): CLOSE block with PROCEEDED" \
+  "grep -qF '## NOTIF ${AEb_ID}#CLOSE' '$AEb/NOTIFICATIONS.md' && grep -q 'PROCEEDED' '$AEb/NOTIFICATIONS.md'"
+check "T-AE-b tick3: exactly 2 NOTIF level blocks (no extra)" \
+  "[ \"\$(grep -cF '## NOTIF ${AEb_ID}#L' '$AEb/NOTIFICATIONS.md')\" -eq 2 ]"
+
+# ---------------------------------------------------------------------------
+# T-AE-c: never-auto past deadline — safety file
+# Decision whose recommended touches bin/massoh (safety-critical file).
+# ---------------------------------------------------------------------------
+echo "-- T-AE-c: never-auto past deadline (safety-file) --"
+AEc="$TMP/ae_c"; mkaerepo "$AEc" "on" 5 0
+AEc_OPEN=2000000
+AEc_DEADLINE=$(( AEc_OPEN + 300 ))
+AEc_ID="AESC-TEST-C-0001"
+ae_inject_record "$AEc" \
+  "$AEc_ID" "$AEc_OPEN" \
+  "AE test item" "Modify safety file?" "touch bin/massoh" \
+  "false" "false" "safety-file" "" \
+  "PRODUCT_STRATEGY.md#north-star" "safety" \
+  "2" "$AEc_DEADLINE"
+
+# Tick past deadline.
+( cd "$AEc" && MASSOH_NOW=$(( AEc_DEADLINE + 10 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-c safety-file: CLOSE block present" \
+  "grep -qF '## NOTIF ${AEc_ID}#CLOSE' '$AEc/NOTIFICATIONS.md'"
+check "T-AE-c safety-file: CLOSE status=HELD_BLOCKED" \
+  "grep -A5 '## NOTIF ${AEc_ID}#CLOSE' '$AEc/NOTIFICATIONS.md' | grep -q 'HELD_BLOCKED'"
+check "T-AE-c safety-file: NOT PROCEEDED" \
+  "! grep -A10 '## NOTIF ${AEc_ID}#CLOSE' '$AEc/NOTIFICATIONS.md' | grep -q 'PROCEEDED'"
+
+# ---------------------------------------------------------------------------
+# T-AE-d: never-auto past deadline — irreversible
+# ---------------------------------------------------------------------------
+echo "-- T-AE-d: never-auto past deadline (irreversible) --"
+AEd="$TMP/ae_d"; mkaerepo "$AEd" "on" 5 0
+AEd_OPEN=3000000
+AEd_DEADLINE=$(( AEd_OPEN + 300 ))
+AEd_ID="AESC-TEST-D-0001"
+ae_inject_record "$AEd" \
+  "$AEd_ID" "$AEd_OPEN" \
+  "AE test item" "Delete old data?" "git push --force" \
+  "false" "false" "irreversible" "0" \
+  "PRODUCT_STRATEGY.md#north-star" "cleanup" \
+  "2" "$AEd_DEADLINE"
+
+( cd "$AEd" && MASSOH_NOW=$(( AEd_DEADLINE + 10 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-d irreversible: HELD_BLOCKED past deadline" \
+  "grep -qF '## NOTIF ${AEd_ID}#CLOSE' '$AEd/NOTIFICATIONS.md' && grep -A5 '## NOTIF ${AEd_ID}#CLOSE' '$AEd/NOTIFICATIONS.md' | grep -q 'HELD_BLOCKED'"
+check "T-AE-d irreversible: NOT PROCEEDED" \
+  "! grep -q 'PROCEEDED' '$AEd/NOTIFICATIONS.md'"
+
+# ---------------------------------------------------------------------------
+# T-AE-e: never-auto past deadline — cost over cap; threshold is live; missing est = held
+# ---------------------------------------------------------------------------
+echo "-- T-AE-e: never-auto past deadline (cost over cap + threshold live) --"
+
+# Sub-test 1: est_spend=3 > cap=0 → HELD
+AEe1="$TMP/ae_e1"; mkaerepo "$AEe1" "on" 5 0   # spend_cap=0
+AEe1_OPEN=4000000; AEe1_DEADLINE=$(( AEe1_OPEN + 300 ))
+AEe1_ID="AESC-TEST-E1-001"
+ae_inject_record "$AEe1" \
+  "$AEe1_ID" "$AEe1_OPEN" \
+  "AE test item" "Run paid agent?" "claude -p" \
+  "true" "true" "" "3" \
+  "PRODUCT_STRATEGY.md#north-star" "uses claude for task" \
+  "2" "$AEe1_DEADLINE"
+
+( cd "$AEe1" && MASSOH_NOW=$(( AEe1_DEADLINE + 10 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-e1 cost>cap(0): HELD_BLOCKED past deadline" \
+  "grep -qF '## NOTIF ${AEe1_ID}#CLOSE' '$AEe1/NOTIFICATIONS.md' && grep -A5 '## NOTIF ${AEe1_ID}#CLOSE' '$AEe1/NOTIFICATIONS.md' | grep -q 'HELD_BLOCKED'"
+
+# Sub-test 2: est_spend=3, cap=5 → PROCEED (threshold is live)
+AEe2="$TMP/ae_e2"; mkaerepo "$AEe2" "on" 5 5   # spend_cap=5
+AEe2_OPEN=4100000; AEe2_DEADLINE=$(( AEe2_OPEN + 300 ))
+AEe2_ID="AESC-TEST-E2-001"
+ae_inject_record "$AEe2" \
+  "$AEe2_ID" "$AEe2_OPEN" \
+  "AE test item" "Run paid agent?" "claude -p bounded" \
+  "true" "true" "" "3" \
+  "PRODUCT_STRATEGY.md#north-star" "uses claude within cap" \
+  "2" "$AEe2_DEADLINE"
+
+( cd "$AEe2" && MASSOH_NOW=$(( AEe2_DEADLINE + 10 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-e2 cost(3)<=cap(5): PROCEEDED (threshold is live)" \
+  "grep -qF '## NOTIF ${AEe2_ID}#CLOSE' '$AEe2/NOTIFICATIONS.md' && grep -q 'PROCEEDED' '$AEe2/NOTIFICATIONS.md'"
+
+# Sub-test 3: missing est_spend → HELD (fail-closed)
+AEe3="$TMP/ae_e3"; mkaerepo "$AEe3" "on" 5 5   # spend_cap=5 (generous)
+AEe3_OPEN=4200000; AEe3_DEADLINE=$(( AEe3_OPEN + 300 ))
+AEe3_ID="AESC-TEST-E3-001"
+ae_inject_record "$AEe3" \
+  "$AEe3_ID" "$AEe3_OPEN" \
+  "AE test item" "Run something?" "do-something" \
+  "true" "true" "" "" \
+  "PRODUCT_STRATEGY.md#north-star" "missing spend estimate" \
+  "2" "$AEe3_DEADLINE"
+
+( cd "$AEe3" && MASSOH_NOW=$(( AEe3_DEADLINE + 10 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-e3 missing est_spend: HELD_BLOCKED (fail-closed)" \
+  "grep -qF '## NOTIF ${AEe3_ID}#CLOSE' '$AEe3/NOTIFICATIONS.md' && grep -A5 '## NOTIF ${AEe3_ID}#CLOSE' '$AEe3/NOTIFICATIONS.md' | grep -q 'HELD_BLOCKED'"
+
+# ---------------------------------------------------------------------------
+# T-AE-f: owner-decision-cancels-timer
+# ---------------------------------------------------------------------------
+echo "-- T-AE-f: owner-decision-cancels-timer --"
+
+# Sub-test 1: APPROVE row before deadline → RESOLVED_BY_OWNER, no auto-proceed
+AEf1="$TMP/ae_f1"; mkaerepo "$AEf1" "on" 5 0
+AEf1_OPEN=5000000; AEf1_DEADLINE=$(( AEf1_OPEN + 300 ))
+AEf1_ID="AESC-TEST-F1-001"
+ae_inject_record "$AEf1" \
+  "$AEf1_ID" "$AEf1_OPEN" \
+  "AE test item" "Decide this?" "do-it" \
+  "true" "true" "" "0" \
+  "PRODUCT_STRATEGY.md#north-star" "test rationale" \
+  "1" "$AEf1_DEADLINE"
+
+# Seed DECISIONS.md with owner answer (ts >= open_ts, before deadline).
+mkdir -p "$AEf1"
+cat > "$AEf1/DECISIONS.md" <<DECF1
+# DECISIONS.md — owner answers
+
+| decision_id | verdict | note | ts | by |
+|---|---|---|---|---|
+| $AEf1_ID | APPROVE | go ahead | $(date -u -d "@$(( AEf1_OPEN + 50 ))" +%Y-%m-%dT%H:%MZ 2>/dev/null || echo '2000-01-01T00:01Z') | owner |
+DECF1
+
+# Tick before deadline (owner answered).
+( cd "$AEf1" && MASSOH_NOW=$(( AEf1_OPEN + 60 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-f1 APPROVE: RESOLVED_BY_OWNER close block" \
+  "grep -qF '## NOTIF ${AEf1_ID}#CLOSE' '$AEf1/NOTIFICATIONS.md' && grep -A5 '## NOTIF ${AEf1_ID}#CLOSE' '$AEf1/NOTIFICATIONS.md' | grep -q 'RESOLVED_BY_OWNER'"
+check "T-AE-f1 APPROVE: NOT PROCEEDED (v1 resolves, does not auto-act)" \
+  "! grep -A10 '## NOTIF ${AEf1_ID}#CLOSE' '$AEf1/NOTIFICATIONS.md' | grep -q '^- final_status: PROCEEDED'"
+
+# Sub-test 2: owner row BEFORE open_ts does NOT count.
+AEf2="$TMP/ae_f2"; mkaerepo "$AEf2" "on" 5 0
+AEf2_OPEN=5100000; AEf2_DEADLINE=$(( AEf2_OPEN + 300 ))
+AEf2_ID="AESC-TEST-F2-001"
+ae_inject_record "$AEf2" \
+  "$AEf2_ID" "$AEf2_OPEN" \
+  "AE test item" "Decide?" "do-it" \
+  "true" "true" "" "0" \
+  "PRODUCT_STRATEGY.md#north-star" "test rationale" \
+  "1" "$AEf2_DEADLINE"
+
+cat > "$AEf2/DECISIONS.md" <<DECF2
+# DECISIONS.md — owner answers
+
+| decision_id | verdict | note | ts | by |
+|---|---|---|---|---|
+| $AEf2_ID | APPROVE | old answer | $(date -u -d "@$(( AEf2_OPEN - 100 ))" +%Y-%m-%dT%H:%MZ 2>/dev/null || echo '1990-01-01T00:00Z') | owner |
+DECF2
+
+# Tick past deadline — old answer must NOT count → expect PROCEEDED (eligible record).
+( cd "$AEf2" && MASSOH_NOW=$(( AEf2_DEADLINE + 10 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-f2 old owner answer (before open_ts) does NOT cancel timer → auto-proceeds" \
+  "grep -qF '## NOTIF ${AEf2_ID}#CLOSE' '$AEf2/NOTIFICATIONS.md' && grep -q 'PROCEEDED' '$AEf2/NOTIFICATIONS.md'"
+
+# Sub-test 3: REJECT → record closed, HELD_BLOCKED with owner note.
+AEf3="$TMP/ae_f3"; mkaerepo "$AEf3" "on" 5 0
+AEf3_OPEN=5200000; AEf3_DEADLINE=$(( AEf3_OPEN + 300 ))
+AEf3_ID="AESC-TEST-F3-001"
+ae_inject_record "$AEf3" \
+  "$AEf3_ID" "$AEf3_OPEN" \
+  "AE test item" "Decide?" "do-it" \
+  "true" "true" "" "0" \
+  "PRODUCT_STRATEGY.md#north-star" "test rationale" \
+  "1" "$AEf3_DEADLINE"
+
+cat > "$AEf3/DECISIONS.md" <<DECF3
+# DECISIONS.md — owner answers
+
+| decision_id | verdict | note | ts | by |
+|---|---|---|---|---|
+| $AEf3_ID | REJECT | not now | $(date -u -d "@$(( AEf3_OPEN + 50 ))" +%Y-%m-%dT%H:%MZ 2>/dev/null || echo '2000-01-01T00:01Z') | owner |
+DECF3
+
+( cd "$AEf3" && MASSOH_NOW=$(( AEf3_OPEN + 60 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-f3 REJECT: RESOLVED_BY_OWNER" \
+  "grep -qF '## NOTIF ${AEf3_ID}#CLOSE' '$AEf3/NOTIFICATIONS.md' && grep -A5 '## NOTIF ${AEf3_ID}#CLOSE' '$AEf3/NOTIFICATIONS.md' | grep -q 'RESOLVED_BY_OWNER'"
+
+# ---------------------------------------------------------------------------
+# T-AE-g: plan-guard blocks off-plan recommendations
+# ---------------------------------------------------------------------------
+echo "-- T-AE-g: plan-guard blocks off-plan --"
+
+# Sub-test 1: empty plan_ref → HELD
+AEg1="$TMP/ae_g1"; mkaerepo "$AEg1" "on" 5 0
+AEg1_OPEN=6000000; AEg1_DEADLINE=$(( AEg1_OPEN + 300 ))
+AEg1_ID="AESC-TEST-G1-001"
+ae_inject_record "$AEg1" \
+  "$AEg1_ID" "$AEg1_OPEN" \
+  "AE test item" "Do something?" "do-it" \
+  "true" "true" "" "0" \
+  "" "" \
+  "2" "$AEg1_DEADLINE"
+
+( cd "$AEg1" && MASSOH_NOW=$(( AEg1_DEADLINE + 10 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-g1 empty plan_ref: HELD_BLOCKED (plan-guard fail-closed)" \
+  "grep -qF '## NOTIF ${AEg1_ID}#CLOSE' '$AEg1/NOTIFICATIONS.md' && grep -A5 '## NOTIF ${AEg1_ID}#CLOSE' '$AEg1/NOTIFICATIONS.md' | grep -q 'HELD_BLOCKED'"
+check "T-AE-g1 empty plan_ref: close reason mentions off-plan" \
+  "grep -A10 '## NOTIF ${AEg1_ID}#CLOSE' '$AEg1/NOTIFICATIONS.md' | grep -q 'off-plan'"
+
+# Sub-test 2: wrong plan_ref (not the canonical anchor) → HELD
+AEg2="$TMP/ae_g2"; mkaerepo "$AEg2" "on" 5 0
+AEg2_OPEN=6100000; AEg2_DEADLINE=$(( AEg2_OPEN + 300 ))
+AEg2_ID="AESC-TEST-G2-001"
+ae_inject_record "$AEg2" \
+  "$AEg2_ID" "$AEg2_OPEN" \
+  "AE test item" "Do something?" "do-it" \
+  "true" "true" "" "0" \
+  "SOME_OTHER_DOC.md#section" "wrong anchor" \
+  "2" "$AEg2_DEADLINE"
+
+( cd "$AEg2" && MASSOH_NOW=$(( AEg2_DEADLINE + 10 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-g2 wrong plan_ref: HELD_BLOCKED" \
+  "grep -qF '## NOTIF ${AEg2_ID}#CLOSE' '$AEg2/NOTIFICATIONS.md' && grep -A5 '## NOTIF ${AEg2_ID}#CLOSE' '$AEg2/NOTIFICATIONS.md' | grep -q 'HELD_BLOCKED'"
+
+# Sub-test 3: valid plan_ref + non-empty rationale → PROCEED (allowed)
+AEg3="$TMP/ae_g3"; mkaerepo "$AEg3" "on" 5 0
+AEg3_OPEN=6200000; AEg3_DEADLINE=$(( AEg3_OPEN + 300 ))
+AEg3_ID="AESC-TEST-G3-001"
+ae_inject_record "$AEg3" \
+  "$AEg3_ID" "$AEg3_OPEN" \
+  "AE test item" "Do it?" "yes" \
+  "true" "true" "" "0" \
+  "PRODUCT_STRATEGY.md#north-star" "this advances the north-star goal" \
+  "2" "$AEg3_DEADLINE"
+
+( cd "$AEg3" && MASSOH_NOW=$(( AEg3_DEADLINE + 10 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-g3 valid plan_ref + rationale: PROCEEDED" \
+  "grep -qF '## NOTIF ${AEg3_ID}#CLOSE' '$AEg3/NOTIFICATIONS.md' && grep -q 'PROCEEDED' '$AEg3/NOTIFICATIONS.md'"
+
+# ---------------------------------------------------------------------------
+# T-AE-h: idempotent tick (no double-notify / no double-proceed)
+# ---------------------------------------------------------------------------
+echo "-- T-AE-h: idempotent tick --"
+AEh="$TMP/ae_h"; mkaerepo "$AEh" "on" 5 0
+AEh_OPEN=7000000; AEh_DEADLINE=$(( AEh_OPEN + 300 ))
+AEh_ID="AESC-TEST-H-0001"
+ae_inject_record "$AEh" \
+  "$AEh_ID" "$AEh_OPEN" \
+  "AE test item" "Decide?" "yes" \
+  "true" "true" "" "0" \
+  "PRODUCT_STRATEGY.md#north-star" "test rationale" \
+  "0" "$AEh_DEADLINE"
+
+# Run tick 1 twice at the same time (same MASSOH_NOW) — must NOT double-emit #L1.
+( cd "$AEh" && MASSOH_NOW=$(( AEh_OPEN + 1 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+( cd "$AEh" && MASSOH_NOW=$(( AEh_OPEN + 1 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-h tick1 x2: exactly 1 NOTIF #L1 block (no double-emit)" \
+  "[ \"\$(grep -cF '## NOTIF ${AEh_ID}#L1' '$AEh/NOTIFICATIONS.md')\" -eq 1 ]"
+
+# Run tick at deadline twice — must NOT double-proceed.
+( cd "$AEh" && MASSOH_NOW=$(( AEh_DEADLINE + 1 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+# Capture md5 of NOTIFICATIONS.md after first proceed tick.
+md5_notif_h="$(md5sum '$AEh/NOTIFICATIONS.md' 2>/dev/null | awk '{print $1}')"
+
+( cd "$AEh" && MASSOH_NOW=$(( AEh_DEADLINE + 1 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-h deadline x2: exactly 1 CLOSE block (no double-proceed)" \
+  "[ \"\$(grep -cF '## NOTIF ${AEh_ID}#CLOSE' '$AEh/NOTIFICATIONS.md')\" -eq 1 ]"
+check "T-AE-h deadline x2: NOTIFICATIONS.md stable (md5 identical)" \
+  "[ \"\$(md5sum '$AEh/NOTIFICATIONS.md' | awk '{print \$1}')\" = \"\$(md5sum '$AEh/NOTIFICATIONS.md' | awk '{print \$1}')\" ]"
+
+# ---------------------------------------------------------------------------
+# T-AE-i: AGENT_SYNC [escalation] line emitted per notice; append-only
+# ---------------------------------------------------------------------------
+echo "-- T-AE-i: AGENT_SYNC [escalation] line --"
+AEi="$TMP/ae_i"; mkaerepo "$AEi" "on" 5 0
+AEi_OPEN=8000000; AEi_DEADLINE=$(( AEi_OPEN + 300 ))
+AEi_ID="AESC-TEST-I-0001"
+ae_inject_record "$AEi" \
+  "$AEi_ID" "$AEi_OPEN" \
+  "AE test item" "Decide?" "yes" \
+  "true" "true" "" "0" \
+  "PRODUCT_STRATEGY.md#north-star" "test rationale" \
+  "0" "$AEi_DEADLINE"
+
+# Capture content before.
+AEi_SYNC_BEFORE="$(wc -l < "$AEi/AGENT_SYNC.md" 2>/dev/null || echo 0)"
+
+( cd "$AEi" && MASSOH_NOW=$(( AEi_OPEN + 1 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-i: AGENT_SYNC.md has [escalation] line after notice" \
+  "grep -q '\[escalation\]' '$AEi/AGENT_SYNC.md'"
+AEi_SYNC_AFTER="$(wc -l < "$AEi/AGENT_SYNC.md" 2>/dev/null || echo 0)"
+check "T-AE-i: AGENT_SYNC.md line count increased (append-only)" \
+  "[ '$AEi_SYNC_AFTER' -gt '$AEi_SYNC_BEFORE' ]"
+# Prior sync content still present.
+check "T-AE-i: AGENT_SYNC.md prior '# sync' header still present (append-only)" \
+  "grep -q '# sync' '$AEi/AGENT_SYNC.md'"
+
+# ---------------------------------------------------------------------------
+# T-AE-j: crash-safety — queue entry present but notice not yet written
+# Next tick must emit #L1 exactly once (no loss, no dup)
+# ---------------------------------------------------------------------------
+echo "-- T-AE-j: crash-safety --"
+AEj="$TMP/ae_j"; mkaerepo "$AEj" "on" 5 0
+AEj_OPEN=9000000; AEj_DEADLINE=$(( AEj_OPEN + 300 ))
+AEj_ID="AESC-TEST-J-0001"
+# Inject record with notices_sent=0 (simulates: queue written, but tick crashed before notice).
+ae_inject_record "$AEj" \
+  "$AEj_ID" "$AEj_OPEN" \
+  "AE test item" "Decide?" "yes" \
+  "true" "true" "" "0" \
+  "PRODUCT_STRATEGY.md#north-star" "test rationale" \
+  "0" "$AEj_DEADLINE"
+
+# First tick after "crash" — must emit #L1 exactly once.
+( cd "$AEj" && MASSOH_NOW=$(( AEj_OPEN + 1 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-j crash-safety: #L1 emitted on next tick (no loss)" \
+  "grep -qF '## NOTIF ${AEj_ID}#L1' '$AEj/NOTIFICATIONS.md'"
+check "T-AE-j crash-safety: exactly 1 #L1 block (no dup)" \
+  "[ \"\$(grep -cF '## NOTIF ${AEj_ID}#L1' '$AEj/NOTIFICATIONS.md')\" -eq 1 ]"
+
+# Second tick with same time — must NOT add a second #L1.
+( cd "$AEj" && MASSOH_NOW=$(( AEj_OPEN + 1 )) \
+  MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
+  "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
+
+check "T-AE-j crash-safety: still exactly 1 #L1 after duplicate tick" \
+  "[ \"\$(grep -cF '## NOTIF ${AEj_ID}#L1' '$AEj/NOTIFICATIONS.md')\" -eq 1 ]"
+
+# ---------------------------------------------------------------------------
+# T-AE-regression: existing T7/T10/T12 regression (bin/massoh and manifest unchanged)
+# ---------------------------------------------------------------------------
+echo "-- T-AE-regression: safety-critical files unchanged after all T-AE tests --"
+md5_massoh_ae_after="$(md5sum "$REPO_ROOT/bin/massoh" | awk '{print $1}')"
+md5_manifest_ae_after="$(md5sum "$REPO_ROOT/manifest.yml" | awk '{print $1}')"
+check "T-AE-regression bin/massoh checksum unchanged" \
+  "[ '$md5_massoh_before' = '$md5_massoh_ae_after' ]"
+check "T-AE-regression manifest.yml checksum unchanged" \
+  "[ '$md5_manifest_before' = '$md5_manifest_ae_after' ]"
+
+echo "== T-AE done =="
 
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL GREEN — $tests checks passed."; else echo "$fails/$tests checks FAILED."; fi

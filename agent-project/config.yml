@@ -1,0 +1,22 @@
+# agent-project/config.yml — Massoh project configuration
+# Parse pattern: massoh_config_get <file> <key> <default>
+# Keys are last-value-wins; malformed values fall back to the listed default.
+
+# ---- cron runner ----
+# Minutes of owner idleness before the cron loop may act (integer >= 1; malformed -> 25).
+cron_idle_min: 25
+
+# ---- autonomy decide-or-defer (v0.28.0) — default OFF ----
+# Master flag: on | off (anything else -> off). When off the loop is byte-identical to v0.27.1.
+cron_decide_or_defer: off
+
+# Grace window in minutes before timed proceed-or-hold (integer >= 1; malformed -> 120).
+cron_grace_min: 120
+
+# Number of owner notices before proceed-or-hold (integer 1..2; malformed/out-of-range -> 2).
+cron_notify_count: 2
+
+# Maximum paid spend (USD) for auto-proceed (non-negative integer; malformed -> 0).
+# Default 0 = any non-zero paid spend is never-auto (safest default; matches current posture).
+# Raise (e.g. 5) to allow small bounded spends to auto-proceed.
+cron_spend_cap_usd: 0

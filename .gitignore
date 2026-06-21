@@ -6,3 +6,8 @@
 
 # LibreOffice lock files
 .~lock.*#
+
+# Decide-or-defer runtime artifacts (v0.28.0) — append-only, kept locally, not committed
+NOTIFICATIONS.md
+DECISIONS.md
+.agent_tasks/cron/decisions.queue
