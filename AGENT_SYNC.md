@@ -4,34 +4,35 @@
 Read at every session boot; update after every meaningful task (`/sync`). Dashboard, not a history
 dump — task detail lives in `.agent_tasks/`, decisions of record in `docs/adr/`.
 
-Last updated: 2026-06-21 (Control plane — dashboard LIVE at 127.0.0.1:8787 **with `--control`** (Massoh+elard); B0 intake button working. **Track A:** A1 ops panels MERGED PR #36 **v0.24.0**. A2 file browser **IMPLEMENTED** on `feat/fleet-filebrowser` (v0.26.0, commit e38ae21) — awaiting reviewer-qa + merge. **Track B:** auth model + **owner SIGNATURE #1** ✓ → **B0 intake button MERGED PR #37 v0.25.0** (auth-gated POST→intake, --control default OFF), suite 635. Tiers b/c (personality/hooks/restart/update) each need own sign-off. [Earlier: observability v0.20–0.23 PRs #31–#35; 24h queue v0.9–0.19.])
+Last updated: 2026-06-21 (Control plane — dashboard LIVE at 127.0.0.1:8787 **with `--control`** on **v0.26.0** (Massoh+elard): file browser + intake button working. **Track A:** A1 ops panels PR #36 **v0.24.0**; **A2 file browser MERGED PR #40 v0.26.0** (read-only `/files` + `/file/<id>`, no-path-from-URL). **Track B:** auth model + **owner SIGNATURE #1** ✓ → **B0 intake button MERGED PR #37 v0.25.0**, suite 635. Tiers b/c (personality/hooks/restart/update) each need own sign-off. [Earlier: observability v0.20–0.23 PRs #31–#35; 24h queue v0.9–0.19.])
 
 ## Current strategic mode
 v0.1 post-extraction — validate that a portable, gated agent OS reduces build-trap for solo+Claude
 shipping. Activation = a repo opts in and lands one packet `00→06` to merge. (see PRODUCT_STRATEGY.md)
 
 ## Current task
-**A2 file browser IMPLEMENTED** — branch `feat/fleet-filebrowser`, commit e38ae21, VERSION 0.26.0, 676/676 green. Awaiting `massoh-reviewer-qa`.
-
-Previous: **Control plane B0 (intake button) SHIPPED; dashboard live with `--control`.**
-`massoh fleet serve --control` (default OFF) ships the first Track-B write: an auth-gated "Add idea"
-form (POST `/repo/<name>/intake`) behind two-lock fail-closed auth (same-origin + per-run capability
-token) + append-only audit. Dashboard is back up at **http://127.0.0.1:8787/** with the button working
-(token printed once to the launch terminal, auto-injected into the form). Track A read panels
-(queue/cron/workflow) + fleet KPI views + task drill-down all live; `massoh fleet learn` produces
-cross-repo lesson **candidates** (never auto-promotes). v0.25.0, suite 635 green.
+**None active — Control plane read-only surface COMPLETE; dashboard live on v0.26.0 with `--control`.**
+The fleet dashboard at **http://127.0.0.1:8787/** (Massoh + elard) now has the full read surface +
+the one authorized write:
+- **Read (Track A):** fleet KPI index + per-repo views (queue/cron/workflow panels), task drill-down,
+  **file browser** (`/repo/<name>/files` grouped list + `/repo/<name>/file/<id>` read-only escaped
+  view — no-path-from-URL, opaque-id, 256 KiB cap, secrets/binaries/symlinks unreachable),
+  `massoh fleet learn` cross-repo lesson **candidates** (never auto-promotes).
+- **Write (Track B, opt-in OFF):** the auth-gated **"Add idea"** intake form (two-lock fail-closed:
+  same-origin + per-run capability token; append-only; audited) — only with `massoh fleet serve --control`.
+v0.26.0, suite 676 green. Loopback-only / read-only-except-intake throughout.
 
 **PARKED FOR OWNER (need your decision/sign-off):**
-1. Track A continuation: **A2 file browser** ("access each generated file + what is it"), **A3** tickets/polish.
-2. Track B **tier b** — agent personality + hooks (PROPOSE-ONLY `*.proposed` drafts; fresh sign-off each).
-3. Track B **tier c** — server restart + `massoh update` (EXEC; confirm + fresh sign-off; §6 for update).
+1. Track A polish: **A3** tickets/issues view + nav polish (optional; read-only, would ship under grant).
+2. Track B **tier b** — change agent personality + add hooks (PROPOSE-ONLY `*.proposed` drafts; fresh sign-off each).
+3. Track B **tier c** — server restart + `massoh update` from the browser (EXEC; confirm + fresh sign-off; §6 for update).
 4. Browser **"update master learning"** button (POST → fleet learn); **engine adoption** of any
    `FLEET_LEARNINGS.proposed.md` candidate (gated; never auto).
 5. **Engine-extraction (#2)** — split the engine into its own repo (deferred by owner).
-6. Owner-optional: **deploy** v0.25.0 to `~/.claude` via `massoh update` (currently ~/.claude is v0.23.0).
+6. Owner-optional: **deploy** v0.26.0 to `~/.claude` via `massoh update` (currently ~/.claude is v0.23.0).
 
-**Last shipped:** Control plane B0 — auth-gated intake button. **Merged PR #37, VERSION 0.25.0**, suite 635 green. (Housekeeping PR #38: dropped stray deck lockfile.)
-**In flight:** A2 file browser — branch `feat/fleet-filebrowser`, commit e38ae21, VERSION 0.26.0, 676/676 green. → massoh-reviewer-qa.
+**Last shipped:** Control plane A2 — read-only file browser. **Merged PR #40, VERSION 0.26.0**, suite 676 green.
+(Earlier this session: B0 intake button PR #37 v0.25.0; deck lockfile cleanup PR #38; A1 ops panels PR #36 v0.24.0.)
 
 ## Open questions (owner decision needed)
 | Question | Raised | Context |
@@ -132,6 +133,7 @@ cross-repo lesson **candidates** (never auto-promotes). v0.25.0, suite 635 green
 | 2026-06-21 | Housekeeping: `git add -A` swept a stray LibreOffice lock `deck/.~lock.Massoh-pitch.pptx#` into #37; removed from tracking + gitignored `.~lock.*#` via **PR #38 → main `826f7ca`**. `deck/` (pitch deck + build_deck.js) now tracked — owner-optional cleanup item resolved (committed rather than ignored). | owner |
 | 2026-06-21 | Control plane track A **A2 file browser: IMPLEMENTED** — `GET /repo/<name>/files` + `GET /repo/<name>/file/<id>` routes; double set-membership security; opaque-id map (`sha256(relpath)[:16]`); 12-category artifact taxonomy; 256 KiB size cap + truncation notice; XSS/traversal/secret/symlink prevention; T-FB-1..17 live-HTTP tests all green; 676/676 suite green. Branch `feat/fleet-filebrowser` commit `e38ae21`, VERSION 0.26.0. → massoh-reviewer-qa. | implementer |
 | 2026-06-21 | Control plane **A2 file browser: APPROVE** — all conditions verified (06_A2_review.md); no-path-from-URL structurally proved (file_id dict-key only, abs_path from server-built map) + live reproduced (7 traversal attacks → 404 on ephemeral port 34948); secret/symlink/dotfile unreachable at enumeration (would-be ids → 404); 256 KiB cap + truncation notice reproduced; XSS escaped (raw script absent, &lt;script&gt; in &lt;pre&gt;); POST→404; byte-snapshot identical; PID 4291 (live 8787 dashboard) untouched throughout; 676/676 green (self-run); bin/massoh+manifest+safety-critical diff=0; NB-1 T-FB-12b static source (non-blocking); NB-2 symlink dual-exclusion defense-in-depth (non-blocking). Ready to merge. | reviewer-qa |
+| 2026-06-21 | Control plane **A2 file browser: MERGED PR #40 → main `a868524`, VERSION 0.26.0** (squash). `GET /repo/<name>/files` (grouped list) + `GET /repo/<name>/file/<id>` (read-only escaped view) live. Dashboard **restarted on v0.26.0 with `--control`** (PID-scoped kill of old 8787, no broad pkill) at 127.0.0.1:8787. Smoke-verified live: files list 200 (176 files on Massoh), known id → 200 (escaped `<pre>`), traversal/non-hex/unknown ids → 404, elard files list 200, intake form intact, unauth POST → 403. Last big read-only control-plane piece shipped. | owner |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -215,6 +217,15 @@ Decision: APPROVE. All mandatory conditions independently verified. 676/676 gree
 Next recommended agent: orchestrator / squash-merge PR → main (VERSION 0.26.0).
 Next action: Squash-merge feat/fleet-filebrowser → main.
              Auto-merge-on-green applies (owner 2026-06-19 policy).
+
+DONE (owner/orchestrator, 2026-06-21):
+  Squash-merged feat/fleet-filebrowser → PR #40 → main a868524, VERSION 0.26.0.
+  Dashboard RESTARTED on v0.26.0 with --control (PID-scoped kill of old 8787, no broad pkill).
+  Live-verified http://127.0.0.1:8787/: /repo/Massoh/files → 200 (176 files), known id → 200
+    (escaped <pre>), traversal/non-hex/unknown ids → 404, elard files list → 200, intake form
+    intact, unauth POST → 403.
+  Read-only control-plane surface complete. Remaining: A3 polish (read, under grant);
+    tiers b/c (write/exec) await fresh owner sign-off; deploy v0.26.0 to ~/.claude optional.
 ```
 
 ## Previous handoff (B0 intake-button)
