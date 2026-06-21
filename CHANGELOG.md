@@ -11,6 +11,34 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.24.0] - 2026-06-21
+
+### Added
+- **A1 ops read panels — Queue, Cron, Workflow (slice A1 of control-plane track A):**
+  Three new read-only HTML panels added to the fleet repo view (`/repo/<name>`),
+  implemented entirely in `_fleet_render_repo` via new bash helpers in `lib/verbs/fleet.sh`.
+  All panels are GET-only (POST still 404); no new routes; track B (write/actions) separate.
+
+  - **Queue / tickets panel:** reads `AGENT_BACKLOG.md` — shows open TODO + BLOCKED rows
+    from the main queue section, plus all rows from the `## Intake inbox` section (pri, item,
+    status). BLOCKED rows highlighted with red left-border. Missing backlog → graceful "—".
+
+  - **Cron panel:** read-only cron status — shows whether the cron dir is configured
+    (`yes`/`no`), the current cadence tick counter (`cadence_state` file), and the last
+    line of `cron.log` for last-tick info. Never invokes a cron-mutating command
+    (`crontab -e`, `massoh cron install`, `massoh cron off` all absent from the function).
+
+  - **Workflow panel:** lists all in-flight tasks (TASK-* dirs without `06_review_result.md`)
+    with their current stage (highest packet file: 00→05) and a compact pipeline string
+    `00 → 01 → 02 → 03 → 04 → 05 → 06` with the current stage bracket-marked as `[04]`.
+
+  - **Safety / conditions:** GET-only (N6); every interpolated value HTML-escaped via
+    `_board_html_escape` (N4); `set -euo pipefail`; per-panel graceful degrade (missing
+    file → "—", never crash); read-only byte-snapshot proven (T-FS-36); POST still 404
+    (T-FS-38); no orphan process (T-FS-37); no safety-critical file touched.
+
+  - **Tests (additive):** 9 new T-FS-30..38 checks in `test/run.sh`.
+
 ## [0.23.0] - 2026-06-20
 
 ### Added
