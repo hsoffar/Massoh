@@ -131,6 +131,7 @@ cross-repo lesson **candidates** (never auto-promotes). v0.25.0, suite 635 green
 | 2026-06-21 | Control plane **B0 intake-button: MERGED PR #37 → main `33dcfa0`, VERSION 0.25.0** (squash). First Track-B write slice shipped: `massoh fleet serve --control` (default OFF) → auth-gated POST `/repo/<name>/intake`. Dashboard **restarted on the final build with `--control`** at 127.0.0.1:8787 (intake button live; token printed once to the launch terminal, auto-injected into the form's `_massoh_token` hidden field). Smoke-verified: GET 200, form present, unauth POST→403. Tiers b/c still PARKED (each needs fresh sign-off). | owner |
 | 2026-06-21 | Housekeeping: `git add -A` swept a stray LibreOffice lock `deck/.~lock.Massoh-pitch.pptx#` into #37; removed from tracking + gitignored `.~lock.*#` via **PR #38 → main `826f7ca`**. `deck/` (pitch deck + build_deck.js) now tracked — owner-optional cleanup item resolved (committed rather than ignored). | owner |
 | 2026-06-21 | Control plane track A **A2 file browser: IMPLEMENTED** — `GET /repo/<name>/files` + `GET /repo/<name>/file/<id>` routes; double set-membership security; opaque-id map (`sha256(relpath)[:16]`); 12-category artifact taxonomy; 256 KiB size cap + truncation notice; XSS/traversal/secret/symlink prevention; T-FB-1..17 live-HTTP tests all green; 676/676 suite green. Branch `feat/fleet-filebrowser` commit `e38ae21`, VERSION 0.26.0. → massoh-reviewer-qa. | implementer |
+| 2026-06-21 | Control plane **A2 file browser: APPROVE** — all conditions verified (06_A2_review.md); no-path-from-URL structurally proved (file_id dict-key only, abs_path from server-built map) + live reproduced (7 traversal attacks → 404 on ephemeral port 34948); secret/symlink/dotfile unreachable at enumeration (would-be ids → 404); 256 KiB cap + truncation notice reproduced; XSS escaped (raw script absent, &lt;script&gt; in &lt;pre&gt;); POST→404; byte-snapshot identical; PID 4291 (live 8787 dashboard) untouched throughout; 676/676 green (self-run); bin/massoh+manifest+safety-critical diff=0; NB-1 T-FB-12b static source (non-blocking); NB-2 symlink dual-exclusion defense-in-depth (non-blocking). Ready to merge. | reviewer-qa |
 
 ## Frozen (never delete without an explicit owner unfreeze)
 None.
@@ -167,45 +168,53 @@ None.
 | TASK-2026-06-20-fleet-observability slice 3 | 06_review_result | APPROVE — FLN1–FLN8 all independently verified; 574/574 green (independently run); engine-untouched (git diff empty on agent-os/bin/massoh/manifest.yml/templates/scripts/massoh-dashboard); zero-LLM (static grep clean); candidates-only header present; read-only on discovered repos (live byte-snapshot identical); promotion boundary reproduced live ([generalizable-candidate] at >=2 repos, [project:basename] at 1 repo); NB-1 T-FLN-6a timestamp fragility (non-blocking, disclosed by implementer); NB-2 awk ordering (non-blocking); no blockers. Ready to merge. |
 | TASK-2026-06-21-control-plane slice A1 | 06_review_result | APPROVE — all conditions verified (file:line refs in 06_A1_review.md); cron read-only confirmed (zero mutation commands in _fleet_render_cron_panel body; T-FS-33e static check); N4 escape confirmed (live XSS: raw `<script>` absent, `&lt;script&gt;` present; 9 escape call sites); read-only confirmed (byte-snapshot identical before/after; T-FS-36); POST→404 confirmed (T-FS-38a/b + live HTTP 404); no orphan server (T-FS-37); 597/597 green (independently run; T-FLN-6a pre-existing flake non-blocking); scope clean — 5 files (lib/verbs/fleet.sh +272, test/run.sh +167, VERSION, CHANGELOG, AGENT_SYNC rolling); bin/massoh+manifest.yml+templates diff=0; AGENT_BACKLOG.md absent from diff; NB-1 T-FS-33c broad digit match (non-blocking); NB-2 workflow done-signal assumes 06_review_result.md name (consistent with codebase, non-blocking). Ready to merge. |
 | TASK-2026-06-21-control-plane B0 | 06_review_result | APPROVE — B1–B7 verified (06_B0_review.md); 635/635 green; two-lock fail-closed + exec-array-no-shell + default-OFF + token-never-leaked + audit all independently reproduced. Ready to merge. |
-| TASK-2026-06-21-control-plane A2 | 05_implementation_handoff | IMPLEMENTED — file browser, double set-membership, 12-category taxonomy, 256 KiB cap, XSS/traversal prevention; T-FB-1..17 live-HTTP all green; 676/676 green. Branch feat/fleet-filebrowser commit e38ae21. → massoh-reviewer-qa. |
+| TASK-2026-06-21-control-plane A2 | 06_review_result | APPROVE — all conditions verified (06_A2_review.md); no-path-from-URL structurally proved + live reproduced (7 traversal attacks → 404); secret/symlink/dotfile unreachable (enumeration exclusion confirmed); 256 KiB cap + truncation notice reproduced; XSS escaped (raw script absent, &lt;script&gt; in &lt;pre&gt;); POST→404; read-only byte-snapshot identical; PID-scoped teardown (live 8787 dashboard untouched); 676/676 green (self-run); scope = 5 product files + 3 task artifacts; bin/massoh+manifest.yml diff=0. Ready to merge. |
 
 ## Last handoff
 ```
-Agent: massoh-implementer
-Mode: IMPLEMENTATION
+Agent: massoh-reviewer-qa
+Mode: REVIEW_QA
 Task: TASK-2026-06-21-control-plane — A2 file browser (read-only)
-Status: IMPLEMENTED. 05_A2_handoff.md written. 676/676 green.
+Status: APPROVE. 06_A2_review.md written. 676/676 green (self-run).
 Branch: feat/fleet-filebrowser (commit e38ae21)
 
-Files changed: scripts/massoh-dashboard (+~580 lines), lib/verbs/fleet.sh (+~180 lines),
-  test/run.sh (+T-FB-1..17), VERSION (0.26.0), CHANGELOG ([0.26.0]).
-Hard constraints: bin/massoh diff=0, manifest.yml diff=0, safety-critical files diff=0.
-GET-only: POST → 404 (control_mode unchanged).
+Decision: APPROVE. All mandatory conditions independently verified. 676/676 green (self-run).
 
-Security model:
-  - No path-from-URL: file_id is dict key only; abs_path from server-side map.
-  - Double set-membership: name ∈ repo_name_map THEN id ∈ file_map.
-  - Realpath confinement at enumeration + re-check before read.
-  - Excluded at enumeration: symlinks, dotpaths (.agent_tasks root allowed), secrets,
-    non-allowlist extensions, binary-sniffed files.
-  - 256 KiB size cap + truncation notice (Python + bash belt-and-suspenders).
-  - All HTML via _board_html_escape; file content via head -c | sed pipeline.
+  No-path-from-URL (structural + live, ephemeral port 34948):
+    file_id used ONLY as dict key (line 700); abs_path from server-built map (line 708).
+    7 traversal attacks all → 404:
+      ..%2f..%2fetc%2fpasswd → 404, ../../../../etc/passwd → 404,
+      %2fetc%2fpasswd → 404, 0000000000000000 → 404, NOTAHEX → 404,
+      unknown-repo/files → 404, unknown-repo/file/<id> → 404.
 
-Test proofs:
-  Files panel: listing shows Brief/Packet labels + /file/ links (T-FB-1,2).
-  Known-id 200: Brief · sample-brief.md, content in <pre>, escaped (T-FB-3).
-  Traversal/unknown-id/non-hex: all → 404 (T-FB-4,5,6).
-  Symlink-escaped: no id, hash → 404 (T-FB-7).
-  Secret-named: no id, hash → 404 (T-FB-8).
-  Large file: truncation notice "Showing first 256 KiB of 305KiB" present; TAIL absent (T-FB-10).
-  XSS: &lt;script&gt; in <pre>, no raw <script> (T-FB-11).
-  Snapshot: byte-snapshot unchanged before/after requests (T-FB-14).
-  POST: 404 on /files and /file/<id> (T-FB-13).
-  No orphan server: PID-scoped SIGTERM (T-FB-15).
+  Secret / dotfile / symlink unreachable (ephemeral port 34948):
+    secret-token.md: _is_secret_name hit; not in listing; would-be id → 404.
+    .git/config: _is_dotpath hit; not in listing; would-be id → 404.
+    escape.md → /etc/hostname: os.path.islink skip + _is_confined realpath backstop;
+      would-be id → 404; /etc/hostname content absent from all responses.
 
-Next agent: massoh-reviewer-qa
-Next action: review 05_A2_handoff.md; verify no-path-from-URL + confinement + size-cap
-             + escape + read-only; run bash test/run.sh; approve → squash-merge PR.
+  Size cap: big.md (312 KiB) → 200, truncation notice present, TAIL_MARKER_LINE absent,
+    response body 265,958 bytes < 512,000.
+
+  XSS: xss.md with <script>alert() → raw <script> absent; &lt;script&gt; in <pre>.
+
+  Read-only: byte-snapshot identical before/after all requests.
+  POST → 404: /files and /file/<id> both 404 (control_mode unaffected).
+  PID-scoped teardown: kill only test PID; live 8787 dashboard (PID 4291) STILL_ALIVE.
+
+  Scope: 5 product files (scripts/massoh-dashboard, lib/verbs/fleet.sh, test/run.sh,
+    VERSION, CHANGELOG) + 3 task artifacts (05_handoff, AGENT_SYNC, 06_review).
+    bin/massoh diff=0. manifest.yml diff=0. NON_NEGOTIABLES diff=0.
+    safety-critical files (templates/, policies/, agent-os/) diff=0.
+
+  Test count: 676/676 green (independently run).
+  NB-1: T-FB-12b static source check (non-blocking; live XSS proof in T-FB-11/12a).
+  NB-2: symlink dual-exclusion (enumeration + realpath) is defense-in-depth (non-blocking).
+  NB-3: Python < 3.10 fallback correct (non-blocking).
+
+Next recommended agent: orchestrator / squash-merge PR → main (VERSION 0.26.0).
+Next action: Squash-merge feat/fleet-filebrowser → main.
+             Auto-merge-on-green applies (owner 2026-06-19 policy).
 ```
 
 ## Previous handoff (B0 intake-button)
