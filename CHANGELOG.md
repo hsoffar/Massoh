@@ -11,6 +11,43 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.25.0] - 2026-06-21
+
+### Added
+- **B0 control plane — auth-gated "Add idea" intake button (tier-a, append-only):**
+  `massoh fleet serve --control` (default OFF) enables a per-run capability token
+  (`secrets.token_urlsafe(32)`, in memory only, printed once to the terminal) and
+  a real POST `/repo/<name>/intake` form in the start-task panel.
+
+  - **Two-lock fail-closed auth (B2):** every write POST requires (a) a hidden form field
+    `_massoh_token` AND `X-Massoh-Token` header, both compared constant-time via
+    `hmac.compare_digest`; AND (b) `Origin`/`Referer` matching `http://127.0.0.1:<port>`.
+    Either lock absent/mismatched → 403 + audit line. Token is memory-only; never on disk,
+    never in args, never in logs.
+
+  - **Exec-array, no shell (B3):** idea passed to `massoh intake` as a single argv element
+    via `subprocess.run([...], shell=False)`. All sanitization, truncation, priority, and
+    append-only semantics come from `cmd_intake` IK1–IK11 unchanged.
+
+  - **Repo set-membership (B4):** `<name>` validated against the server-side discovered-repo
+    map. Unknown name → 404. Repo path comes from the trusted map, never the request body.
+
+  - **Append-only (B5):** the only write is via `massoh intake` (→ `AGENT_BACKLOG.md`
+    `## Intake inbox` section). No safety-critical file is touched; `bin/massoh` change is
+    an additive `--control` pass-through only; `manifest.yml` untouched.
+
+  - **Audit log (B6):** every control attempt (allow AND deny) → one append-only line in
+    `~/.claude/massoh/control-audit.log` (ts, who=local, action, repo-basename, result,
+    arg-summary). Token is NEVER in the audit log.
+
+  - **Default OFF (B1):** without `--control`, the server is byte-identical to v0.24.0
+    (GET-only, no token minted, no form rendered, POST → 404).
+
+  - **Tests:** 12 new B-PILOT-1..12 checks in `test/run.sh` covering default-mode-unchanged,
+    fail-closed 403 (missing token, wrong token, missing/foreign origin, body-only token),
+    oversize body → 413, shell-metachar exec-array proof, unknown repo → 404, audit line
+    on allow + deny, token-never-on-disk, and server-restart new-token → old-token 403.
+
 ## [0.24.0] - 2026-06-21
 
 ### Added

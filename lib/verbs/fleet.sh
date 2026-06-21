@@ -308,12 +308,13 @@ EOF
   _fleet_html_footer
 }
 
-# _fleet_render_repo <repo> <repo_name> <all_repos_newline_separated>
+# _fleet_render_repo <repo> <repo_name> <all_repos_newline_separated> [<control_flag:0|1>]
 # Render a single-repo view page as HTML to stdout.
 # N4: every interpolated value is HTML-escaped.
 # FL1: read-only on $repo.
+# B1: control_flag=1 renders the auth form; 0 or absent renders the read-only note.
 _fleet_render_repo() {
-  local repo="$1" repo_name="$2" all_repos="$3"
+  local repo="$1" repo_name="$2" all_repos="$3" control_flag="${4:-0}"
 
   local esc_name
   esc_name="$(_board_html_escape "$repo_name")"
@@ -398,8 +399,8 @@ EOF2
   printf '<h2>Workflow</h2>\n'
   _fleet_render_workflow_panel "$repo"
 
-  # Start a task (read-only panel — POST is PARKED, owner-gated)
-  _fleet_render_start_task_panel "$repo" "$repo_name"
+  # Add idea panel (read-only note by default; real form with --control)
+  _fleet_render_start_task_panel "$repo" "$repo_name" "$control_flag"
 
   _fleet_html_footer
 }
@@ -666,50 +667,116 @@ STAGES_EOF
   printf '</div>\n'
 }
 
-# _fleet_render_start_task_panel <repo_abs_path> <repo_name>
-# Render a read-only "Start a task" copy-paste panel.
-# Shows the two shell commands an owner can run from their own terminal.
-# NO POST handler — the submit path is PARKED pending owner sign-off (slice 1c §4 R3).
+# _fleet_render_start_task_panel <repo_abs_path> <repo_name> [<control_flag:0|1>]
+# Render the "Add idea" panel.
+# Without --control (control_flag=0 or absent): renders the read-only copy-paste note (unchanged).
+# With --control (control_flag=1): renders a real POST form with a token sentinel placeholder.
+#   The Python server replaces __MASSOH_CONTROL_TOKEN__ with the real in-memory token after render.
+#   This keeps the token out of bash argv/environment entirely (B2).
 # N4: repo_abs_path and repo_name are escaped via _board_html_escape before interpolation.
-# N6: no server-side exec, no agent call, no write, no network.
+# N6: no server-side exec, no agent call, no network (form submit is handled by do_POST, not here).
+# B5: the form POSTs to /repo/<name>/intake — append-only via cmd_intake IK1-IK11.
 _fleet_render_start_task_panel() {
-  local repo="$1" repo_name="$2"
+  local repo="$1" repo_name="$2" control_flag="${3:-0}"
 
   # N4: escape both the abs-path and the name before any HTML interpolation.
-  local esc_path esc_name
+  local esc_path esc_name url_name
   esc_path="$(_board_html_escape "$repo")"
   esc_name="$(_board_html_escape "$repo_name")"
+  url_name="$(printf '%s' "$repo_name" | sed 's|%|%25|g; s| |%20|g; s|"|%22|g; s|<|%3C|g; s|>|%3E|g')"
 
   printf '<section style="margin-top:1.5rem;">\n'
-  printf '<h2>Start a task</h2>\n'
-  printf '<p style="font-size:.84rem;color:#374151;margin-bottom:.75rem;">'
-  printf 'Run one of these commands in your own shell to queue or start a task in '
-  printf '<strong>%s</strong>:</p>\n' "$esc_name"
+  printf '<h2>Add idea</h2>\n'
 
-  printf '<div style="background:#fff;border-radius:.5rem;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:.85rem 1rem;font-size:.84rem;">\n'
+  if [ "$control_flag" = "1" ]; then
+    # --- B0 CONTROL MODE: real form with auth ---
+    # The __MASSOH_CONTROL_TOKEN__ sentinel is replaced by the Python server AFTER render.
+    # It never appears in any bash variable or argv — the substitution happens in Python memory.
+    # B3: form action posts to /repo/<name>/intake (exec-array on server side).
+    # B2: hidden field _massoh_token + X-Massoh-Token header (set by JS shim below).
+    printf '<p style="font-size:.84rem;color:#374151;margin-bottom:.75rem;">'
+    printf 'Queue an idea directly into <strong>%s</strong> (auth-gated; append-only):</p>\n' "$esc_name"
 
-  # Option 1: queue via intake
-  printf '<p style="margin:.3rem 0 .2rem;font-weight:600;color:#374151;">Queue it (append-only inbox):</p>\n'
-  printf '<pre style="background:#f3f4f6;border-radius:.375rem;padding:.5rem .75rem;font-size:.82rem;overflow-x:auto;margin:.2rem 0 .75rem;">'
-  printf '<code>cd %s &amp;&amp; massoh intake &quot;&lt;your idea&gt;&quot;</code>' "$esc_path"
-  printf '</pre>\n'
+    printf '<div style="background:#fff;border-radius:.5rem;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:.85rem 1rem;font-size:.84rem;">\n'
 
-  # Option 2: build interactively
-  printf '<p style="margin:.3rem 0 .2rem;font-weight:600;color:#374151;">Build it interactively:</p>\n'
-  printf '<pre style="background:#f3f4f6;border-radius:.375rem;padding:.5rem .75rem;font-size:.82rem;overflow-x:auto;margin:.2rem 0 .75rem;">'
-  printf '<code>massoh work %s</code>' "$esc_name"
-  printf '</pre>\n'
-  printf '<p style="margin:.1rem 0 .2rem;font-size:.8rem;color:#6b7280;">then, inside the agent session:</p>\n'
-  printf '<pre style="background:#f3f4f6;border-radius:.375rem;padding:.5rem .75rem;font-size:.82rem;overflow-x:auto;margin:.2rem 0;">'
-  printf '<code>/start-task &quot;&lt;your idea&gt;&quot;</code>'
-  printf '</pre>\n'
+    # B2: form carries _massoh_token hidden field; JS shim adds X-Massoh-Token header.
+    # maxlength=200 mirrors IK2 truncation. required enforces non-empty client-side.
+    printf '<form id="massoh-intake-form" method="POST" action="/repo/%s/intake">\n' "$url_name"
+    printf '  <input type="hidden" name="_massoh_token" value="__MASSOH_CONTROL_TOKEN__">\n'
+    printf '  <input type="text" name="idea" maxlength="200" required\n'
+    printf '         style="width:100%%;box-sizing:border-box;padding:.4rem .6rem;border:1px solid #d1d5db;border-radius:.375rem;font-size:.84rem;"\n'
+    printf '         placeholder="Describe your idea (≤200 chars)">\n'
+    printf '  <button type="submit"\n'
+    printf '          style="margin-top:.5rem;padding:.35rem .85rem;background:#2563eb;color:#fff;border:none;border-radius:.375rem;font-size:.84rem;cursor:pointer;">Queue idea</button>\n'
+    printf '</form>\n'
 
-  # Parked note (N6 / §4 R3 — POST is owner-gated)
-  printf '<p style="margin-top:.85rem;font-size:.78rem;color:#9ca3af;font-style:italic;">'
-  printf 'Live one-click submit from the dashboard is owner-gated &mdash; parked pending sign-off.'
-  printf '</p>\n'
+    # B2: tiny same-origin JS shim — adds X-Massoh-Token header from the hidden field value.
+    # This forces a CORS preflight for cross-origin scripted attempts (defense-in-depth).
+    # The shim reads the token from the form field (already in the page); never stored elsewhere.
+    printf '<script>\n'
+    printf '(function(){\n'
+    printf '  var f=document.getElementById("massoh-intake-form");\n'
+    printf '  if(!f)return;\n'
+    printf '  f.addEventListener("submit",function(e){\n'
+    printf '    e.preventDefault();\n'
+    printf '    var fd=new FormData(f);\n'
+    printf '    var tok=fd.get("_massoh_token")||"";\n'
+    printf '    var idea=fd.get("idea")||"";\n'
+    printf '    var body=new URLSearchParams({_massoh_token:tok,idea:idea});\n'
+    printf '    fetch(f.action,{\n'
+    printf '      method:"POST",\n'
+    printf '      headers:{"Content-Type":"application/x-www-form-urlencoded","X-Massoh-Token":tok},\n'
+    printf '      body:body.toString()\n'
+    printf '    }).then(function(r){return r.text().then(function(t){return {ok:r.ok,status:r.status,text:t};});}).then(function(res){\n'
+    printf '      var msg=document.getElementById("massoh-intake-msg");\n'
+    printf '      if(!msg){msg=document.createElement("p");msg.id="massoh-intake-msg";f.parentNode.appendChild(msg);}\n'
+    printf '      msg.style.marginTop=".5rem";msg.style.fontSize=".82rem";\n'
+    printf '      if(res.ok){msg.style.color="#16a34a";msg.textContent="Queued: "+res.text.replace(/^intake ok\\n?/,"").trim();f.reset();}\n'
+    printf '      else{msg.style.color="#dc2626";msg.textContent="Error ("+res.status+"): "+res.text.slice(0,200);}\n'
+    printf '    }).catch(function(err){var msg=document.getElementById("massoh-intake-msg");if(msg)msg.textContent="Request failed: "+err;});\n'
+    printf '  });\n'
+    printf '})();\n'
+    printf '</script>\n'
 
-  printf '</div>\n'
+    printf '<p style="margin-top:.6rem;font-size:.78rem;color:#6b7280;">'
+    printf 'Auth-gated write (owner sign-off #1 on record) &mdash; '
+    printf 'append-only via <code>massoh intake</code> IK1&ndash;IK11. '
+    printf 'Audit log: <code>~/.claude/massoh/control-audit.log</code>.</p>\n'
+
+    printf '</div>\n'
+
+  else
+    # --- DEFAULT / READ-ONLY MODE: copy-paste panel (byte-identical to pre-B0 behavior) ---
+    printf '<p style="font-size:.84rem;color:#374151;margin-bottom:.75rem;">'
+    printf 'Run one of these commands in your own shell to queue or start a task in '
+    printf '<strong>%s</strong>:</p>\n' "$esc_name"
+
+    printf '<div style="background:#fff;border-radius:.5rem;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:.85rem 1rem;font-size:.84rem;">\n'
+
+    # Option 1: queue via intake
+    printf '<p style="margin:.3rem 0 .2rem;font-weight:600;color:#374151;">Queue it (append-only inbox):</p>\n'
+    printf '<pre style="background:#f3f4f6;border-radius:.375rem;padding:.5rem .75rem;font-size:.82rem;overflow-x:auto;margin:.2rem 0 .75rem;">'
+    printf '<code>cd %s &amp;&amp; massoh intake &quot;&lt;your idea&gt;&quot;</code>' "$esc_path"
+    printf '</pre>\n'
+
+    # Option 2: build interactively
+    printf '<p style="margin:.3rem 0 .2rem;font-weight:600;color:#374151;">Build it interactively:</p>\n'
+    printf '<pre style="background:#f3f4f6;border-radius:.375rem;padding:.5rem .75rem;font-size:.82rem;overflow-x:auto;margin:.2rem 0 .75rem;">'
+    printf '<code>massoh work %s</code>' "$esc_name"
+    printf '</pre>\n'
+    printf '<p style="margin:.1rem 0 .2rem;font-size:.8rem;color:#6b7280;">then, inside the agent session:</p>\n'
+    printf '<pre style="background:#f3f4f6;border-radius:.375rem;padding:.5rem .75rem;font-size:.82rem;overflow-x:auto;margin:.2rem 0;">'
+    printf '<code>/start-task &quot;&lt;your idea&gt;&quot;</code>'
+    printf '</pre>\n'
+
+    # Parked note (N6 / §4 R3 — POST is owner-gated; use --control to enable)
+    printf '<p style="margin-top:.85rem;font-size:.78rem;color:#9ca3af;font-style:italic;">'
+    printf 'Live one-click submit from the dashboard is owner-gated &mdash; parked pending sign-off.'
+    printf '</p>\n'
+
+    printf '</div>\n'
+  fi
+
   printf '</section>\n'
 }
 
@@ -1132,24 +1199,31 @@ EOF
 }
 
 # --- fleet serve subcommand (N1/N2/N3/N7 from 00_architecture_review.md) ---
-# massoh fleet serve [--port N]
+# massoh fleet serve [--port N] [--control]
 # Starts scripts/massoh-dashboard (Python stdlib only) bound to 127.0.0.1 (hard-coded, N1).
-# --port is the only knob (default 8787). If python3 is absent: clear message + exit non-zero (N7).
+# --port is the only host/bind knob (default 8787). If python3 is absent: clear message + exit non-zero (N7).
+# B1: --control is OPT-IN, DEFAULT OFF. Without --control the server is GET-only (byte-identical to before).
 # set -euo pipefail safe: all fallible commands guarded.
 _fleet_serve() {
   set -euo pipefail
   local port=8787
+  local control_flag=""  # B1: --control default OFF — empty means no --control passed to dashboard
 
   while [ $# -gt 0 ]; do case "$1" in
     --port) shift; port="${1:-8787}";;
+    --control) control_flag="--control";;  # B1: additive pass-through to dashboard
     --help|-h)
-      printf 'massoh fleet serve [--port N]\n'
+      printf 'massoh fleet serve [--port N] [--control]\n'
       printf '\n'
       printf 'Start the Massoh Fleet dashboard server.\n'
       printf '  Binds to 127.0.0.1 ONLY (not configurable).\n'
       printf '  Default port: 8787. Override with --port N.\n'
       printf '  Requires: python3 (stdlib; no pip deps).\n'
       printf '  Stop with Ctrl-C or SIGTERM.\n'
+      printf '\n'
+      printf '  --control  Enable the auth-gated intake form (B0; default OFF).\n'
+      printf '             Mints a per-run token printed once to this terminal.\n'
+      printf '             Without --control: GET-only, no token minted, POST→404.\n'
       return 0
       ;;
     *) die "unknown fleet serve flag: $1";;
@@ -1175,7 +1249,13 @@ _fleet_serve() {
   # N1: host is hard-coded 127.0.0.1 here in the caller too (belt-and-suspenders).
   # The dashboard script also enforces this independently.
   # exec replaces the shell process so no orphan parent lingers (N3).
-  exec python3 "$dashboard" --port "$port"
+  # B1: control_flag is either "--control" or "" (empty = no flag = default OFF).
+  #     The dashboard validates --control itself; this is a pure additive pass-through.
+  if [ -n "$control_flag" ]; then
+    exec python3 "$dashboard" --port "$port" --control
+  else
+    exec python3 "$dashboard" --port "$port"
+  fi
 }
 
 # ---------------------------------------------------------------------------

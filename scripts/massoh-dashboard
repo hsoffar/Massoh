@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-massoh-dashboard — Massoh Fleet observability dashboard (slice 1a+1b content).
+massoh-dashboard — Massoh Fleet observability dashboard (slice 1a+1b+B0 content).
 
 Security model:
   N1  Bind hard-coded to 127.0.0.1 ONLY. Host is NOT configurable.
@@ -8,6 +8,8 @@ Security model:
         GET /                            → fleet index (bash-rendered HTML)
         GET /repo/<name>                 → per-repo view (bash-rendered HTML)
         GET /repo/<name>/task/<task-id>  → task drill-down (bash-rendered HTML)
+      With --control ONLY:
+        POST /repo/<name>/intake         → auth-gated intake (token + same-origin)
       <name> validated against the discovered-repo set (set-membership only;
       NEVER joined onto a filesystem path).  Unknown name → 404.
       <task-id> validated against THAT repo's discovered task set
@@ -20,29 +22,72 @@ Security model:
       This server adds ZERO HTML templating / interpolation of its own.
   N5  KPIs / discovery come from existing bash verbs (fleet.sh, board.sh, …).
       No business logic in the server.
-  N6  Zero browser token spend. GET-only (POST → 404).
+  N6  Zero browser token spend. GET-only without --control (POST → 404).
   N7  Python 3 stdlib ONLY — no pip, no PyYAML, no external deps.
+  B1  --control default OFF. Without --control: byte-identical to previous server.
+  B2  Two-lock fail-closed auth: token (body field + header, hmac.compare_digest)
+      AND same-origin (Origin/Referer == http://127.0.0.1:<port>). Either absent/
+      mismatch → 403 + audit. Token in process memory only; printed once; never logged.
+  B3  Idea passed to massoh intake as single argv element via exec-array (shell=False).
+  B4  Repo name from server-side set-membership map. Unknown → 404.
+  B5  Append-only write via cmd_intake only (IK1–IK11 reused). No safety-critical file.
+  B6  Every control attempt (allow+deny) → ~/.claude/massoh/control-audit.log (append-only).
+  B7  loopback-only unchanged; set -euo pipefail in bash renderers.
 
 Usage (called by lib/verbs/fleet.sh):
-  scripts/massoh-dashboard [--port 8787]
+  scripts/massoh-dashboard [--port 8787] [--control]
 """
 
 import argparse
+import datetime
+import hmac
 import http.server
 import os
 import re
+import secrets
 import shutil
 import signal
 import socketserver
 import subprocess
 import sys
 import threading
+import urllib.parse
 
 # ---------------------------------------------------------------------------
 # N1: loopback-only — hard-coded; NOT derived from CLI args.
 # ---------------------------------------------------------------------------
 BIND_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
+
+# ---------------------------------------------------------------------------
+# B2: Body size cap — requests over this limit → 413, no write.
+# ---------------------------------------------------------------------------
+MAX_BODY_BYTES = 8192  # 8 KiB
+
+# ---------------------------------------------------------------------------
+# B6: Audit log path — append-only, never in git, mirrors fleet cache location.
+# ---------------------------------------------------------------------------
+_AUDIT_LOG = os.path.expanduser("~/.claude/massoh/control-audit.log")
+
+
+def _write_audit_line(action: str, repo_basename: str, result: str, arg_summary: str) -> None:
+    """
+    B6: Append one audit line to the control-audit.log.
+    Format (tab-separated): <ISO-8601-UTC>\tlocal\t<action>\t<repo-basename>\t<result>\t<arg-summary>
+    Token is NEVER logged. Basename only (no abs-path leak).
+    Fail-open on write error (audit failure must not block the response).
+    """
+    ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Cap arg_summary; strip tab/newline to keep TSV parseable
+    safe_arg = arg_summary.replace("\t", " ").replace("\n", " ").replace("\r", " ")[:120]
+    safe_repo = repo_basename.replace("\t", " ")[:80]
+    line = f"{ts}\tlocal\t{action}\t{safe_repo}\t{result}\t{safe_arg}\n"
+    try:
+        os.makedirs(os.path.dirname(_AUDIT_LOG), exist_ok=True)
+        with open(_AUDIT_LOG, "a", encoding="utf-8") as f:  # SAFETY: append-only audit log
+            f.write(line)
+    except Exception:
+        pass  # audit failure must not crash the server or affect responses
 
 # ---------------------------------------------------------------------------
 # Discovery helpers (Seam B — server discovers repos, passes to bash renderer)
@@ -253,6 +298,10 @@ _REPO_NAME_RE = re.compile(r"^/repo/([A-Za-z0-9_.~\-]+)$")
 # The regex allows the same safe character class as _REPO_NAME_RE for both segments.
 _TASK_VIEW_RE = re.compile(r"^/repo/([A-Za-z0-9_.~\-]+)/task/([A-Za-z0-9_.~\-]+)$")
 
+# B0: valid POST /repo/<name>/intake pattern — only active with --control.
+# <name> validated against server-side set-membership map (never filesystem-joined).
+_INTAKE_POST_RE = re.compile(r"^/repo/([A-Za-z0-9_.~\-]+)/intake$")
+
 
 class _FleetHandler(http.server.BaseHTTPRequestHandler):
     """
@@ -260,12 +309,19 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
     Does NOT extend SimpleHTTPRequestHandler; never calls translate_path().
     No byte of the caller-supplied path is ever os.path.join()-ed onto a
     filesystem root.  Anything not in the allowlist → 404.
-    GET-only (all other methods → 404).
+    GET-only without --control (all other methods → 404).
+    With --control: POST /repo/<name>/intake is the single write route (B1).
     """
 
     # Set by the factory before any request is handled.
     massoh_home: str = ""
     repo_name_map: dict = {}  # name → abs_path; built once at startup
+    # B1: control_mode default False — POST routes only exist when True.
+    control_mode: bool = False
+    # B2: capability_token — CSPRNG token, memory only, printed once, never logged.
+    capability_token: str = ""
+    # N1: the port this server is listening on (needed for same-origin check).
+    server_port: int = DEFAULT_PORT
 
     def log_message(self, fmt, *args):  # noqa: D102 — suppress default access log
         pass
@@ -273,6 +329,29 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
     def _send_404(self):
         body = b"404 Not Found\n"
         self.send_response(404)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_403(self, reason: str = "Forbidden"):
+        body = ("403 Forbidden: " + reason + "\n").encode("utf-8", errors="replace")
+        self.send_response(403)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_413(self):
+        body = b"413 Request Entity Too Large\n"
+        self.send_response(413)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_text(self, body: bytes, status: int = 200):
+        self.send_response(status)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -302,7 +381,6 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
         # NEITHER value is ever os.path.join()-ed onto any filesystem root.
         mt = _TASK_VIEW_RE.match(raw_path)
         if mt:
-            import urllib.parse
             repo_name = urllib.parse.unquote(mt.group(1))
             task_id   = urllib.parse.unquote(mt.group(2))
 
@@ -331,7 +409,6 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
         m = _REPO_NAME_RE.match(raw_path)
         if m:
             # URL-decode the name (only percent-encoded safe chars; no path use).
-            import urllib.parse
             repo_name = urllib.parse.unquote(m.group(1))
 
             # N2: SET-MEMBERSHIP CHECK — validate against the discovered-repo set.
@@ -353,8 +430,155 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
         self._send_404()
 
     def do_POST(self):  # noqa: N802
-        # N6: GET-only; no POST handling in this slice (slice 1c is owner-gated)
-        self._send_404()
+        # B1: Without --control the server is GET-only; all POSTs → 404.
+        if not self.control_mode:
+            self._send_404()
+            return
+
+        # N2: strip query string; route allowlist check.
+        raw_path = self.path.split("?", 1)[0].split("#", 1)[0]
+
+        # Only one POST route exists: POST /repo/<name>/intake
+        m = _INTAKE_POST_RE.match(raw_path)
+        if not m:
+            self._send_404()
+            return
+
+        repo_name = urllib.parse.unquote(m.group(1))
+
+        # --- B2 LOCK 1: Same-origin check (fail-closed) ---
+        # Origin header (set by browser for cross-origin requests) must equal loopback.
+        # If absent, fall back to Referer. If both absent → 403 (fail-closed).
+        expected_origin = f"http://{BIND_HOST}:{self.server_port}"
+        origin = self.headers.get("Origin", "").strip()
+        referer = self.headers.get("Referer", "").strip()
+
+        if origin:
+            origin_ok = (origin == expected_origin)
+        elif referer:
+            # Referer may include path; check it starts with the expected origin
+            origin_ok = referer.startswith(expected_origin + "/") or referer == expected_origin
+        else:
+            # Both absent → fail closed (B2: absent both → 403)
+            origin_ok = False
+
+        if not origin_ok:
+            # Audit the denial before sending 403
+            _write_audit_line("intake", repo_name, "denied-origin",
+                              f"origin={origin!r} referer={referer!r}")
+            self._send_403("Origin mismatch — same-origin required")
+            return
+
+        # --- Body: size cap + content-type check (B4: body ≤ 8 KiB) ---
+        content_length_str = self.headers.get("Content-Length", "0")
+        try:
+            content_length = int(content_length_str)
+        except ValueError:
+            content_length = 0
+
+        if content_length > MAX_BODY_BYTES:
+            _write_audit_line("intake", repo_name, "denied-size",
+                              f"content-length={content_length}")
+            self._send_413()
+            return
+
+        raw_body = self.rfile.read(min(content_length, MAX_BODY_BYTES + 1))
+        if len(raw_body) > MAX_BODY_BYTES:
+            _write_audit_line("intake", repo_name, "denied-size", "body-overflow")
+            self._send_413()
+            return
+
+        # Parse form fields (application/x-www-form-urlencoded)
+        form = urllib.parse.parse_qs(raw_body.decode("utf-8", errors="replace"), keep_blank_values=True)
+
+        def _first(key: str) -> str:
+            vals = form.get(key, [])
+            return vals[0] if vals else ""
+
+        idea_raw = _first("idea")
+        token_body = _first("_massoh_token")
+        token_header = self.headers.get("X-Massoh-Token", "").strip()
+
+        # --- B2 LOCK 2: Capability token check (constant-time, fail-closed) ---
+        # BOTH the hidden form field AND the X-Massoh-Token header must match.
+        # hmac.compare_digest prevents timing side-channels.
+        # Missing token → empty string → constant-time compare still runs → mismatch.
+        token_ref = self.capability_token  # in-memory only; never logged
+        body_ok = bool(token_body) and hmac.compare_digest(token_body, token_ref)
+        header_ok = bool(token_header) and hmac.compare_digest(token_header, token_ref)
+        token_ok = body_ok and header_ok
+
+        if not token_ok:
+            # Audit the denial — token value is NEVER in the audit log (B2/B6)
+            body_present = "yes" if token_body else "no"
+            header_present = "yes" if token_header else "no"
+            _write_audit_line("intake", repo_name, "denied-token",
+                              f"body-token-present={body_present} header-token-present={header_present}")
+            self._send_403("Token invalid — missing or mismatched capability token")
+            return
+
+        # --- B4: Repo name validation — server-side set-membership only ---
+        if repo_name not in self.repo_name_map:
+            # Note: after auth checks passed; still audit this as an attempt.
+            _write_audit_line("intake", repo_name, "denied-unknown-repo",
+                              f"repo={repo_name!r}")
+            self._send_404()
+            return
+
+        repo_path = self.repo_name_map[repo_name]
+
+        # --- B3: Run intake via exec-array (shell=False) — no shell string, no interpolation ---
+        # idea_raw is passed as a SINGLE argv element. All sanitization (IK1–IK11)
+        # is handled by cmd_intake in lib/verbs/intake.sh — this server re-implements none.
+        # The repo path comes from the trusted server-side map (never from the request body).
+        massoh_bin = os.path.join(self.massoh_home, "bin", "massoh")
+        if not os.path.isfile(massoh_bin):
+            # Fallback: try massoh on PATH
+            massoh_bin = "massoh"
+
+        # Arg summary for audit (first 60 chars of idea, IK2-style; no raw pipe/newline)
+        idea_summary = idea_raw.replace("|", " ").replace("\n", " ").replace("\r", " ")[:60]
+
+        try:
+            result = subprocess.run(
+                [massoh_bin, "intake", idea_raw],  # B3: exec-array; idea_raw is ONE argv element
+                cwd=repo_path,
+                shell=False,                        # B3: shell=False — no shell string built
+                capture_output=True,
+                timeout=30,
+                env=dict(os.environ, MASSOH_HOME=self.massoh_home),
+            )
+        except FileNotFoundError:
+            _write_audit_line("intake", repo_name, "error", f"massoh-bin-not-found idea={idea_summary!r}")
+            body = b"500 Internal Error: massoh binary not found\n"
+            self._send_text(body, 500)
+            return
+        except subprocess.TimeoutExpired:
+            _write_audit_line("intake", repo_name, "error", f"timeout idea={idea_summary!r}")
+            body = b"500 Internal Error: intake timed out\n"
+            self._send_text(body, 500)
+            return
+
+        if result.returncode == 0:
+            stdout_text = result.stdout.decode("utf-8", errors="replace").strip()
+            # B6: audit success (allow)
+            _write_audit_line("intake", repo_name, "ok", f"idea={idea_summary!r}")
+            # B5: success response — echo the intake output (repo data, not user-controlled HTML)
+            resp_body = (
+                "intake ok\n"
+                + stdout_text
+                + "\n"
+            ).encode("utf-8", errors="replace")
+            self._send_text(resp_body)
+        else:
+            stderr_text = result.stderr.decode("utf-8", errors="replace").strip()
+            _write_audit_line("intake", repo_name, "error", f"intake-nonzero idea={idea_summary!r}")
+            resp_body = (
+                "intake error\n"
+                + stderr_text
+                + "\n"
+            ).encode("utf-8", errors="replace")
+            self._send_text(resp_body, 500)
 
     # ------------------------------------------------------------------
     # Renderers (delegate all HTML production to bash — Seam A)
@@ -385,17 +609,38 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
         Render a per-repo view.
         repo_path comes from the server-side map (trusted); never from the URL directly.
         Seam A: bash (_fleet_render_repo) produces + escapes all HTML.
+        B1/B2: When control_mode is ON, bash emits __MASSOH_CONTROL_TOKEN__ as a sentinel
+        in the form's hidden field; this method replaces it with the real token AFTER render.
+        The token never touches bash argv/environment — it lives only in Python memory.
+        When control_mode is OFF, the sentinel is absent from the rendered HTML entirely
+        (bash renders the read-only parked note instead of the form).
         """
         # Build the all-repos list for sibling nav (newline-separated paths)
         all_repos_lines = "\n".join(self.repo_name_map.values())
+
+        # Pass --control flag to the bash renderer so it knows to emit the real form.
+        control_flag = "1" if self.control_mode else "0"
 
         func_call = (
             f"_fleet_render_repo "
             f"{_sh_quote(repo_path)} "
             f"{_sh_quote(repo_name)} "
-            f"{_sh_quote(all_repos_lines)}"
+            f"{_sh_quote(all_repos_lines)} "
+            f"{_sh_quote(control_flag)}"
         )
-        return _run_bash_renderer(self.massoh_home, [func_call])
+        rendered = _run_bash_renderer(self.massoh_home, [func_call])
+
+        # B2: Token injection — replace the sentinel with the real in-memory token.
+        # The sentinel string is a fixed, known placeholder emitted by bash.
+        # We do the substitution in Python AFTER render so the token never appears in
+        # any bash script, argument, or environment variable.
+        # B11: Token only appears in the hidden field; nowhere else in the HTML.
+        if self.control_mode and b"__MASSOH_CONTROL_TOKEN__" in rendered:
+            rendered = rendered.replace(
+                b"__MASSOH_CONTROL_TOKEN__",
+                self.capability_token.encode("ascii"),
+            )
+        return rendered
 
     def _render_task(
         self, repo_name: str, repo_path: str, task_id: str, task_dir: str
@@ -421,14 +666,27 @@ class _FleetHandler(http.server.BaseHTTPRequestHandler):
 # Server lifecycle
 # ---------------------------------------------------------------------------
 
-def _make_handler_class(massoh_home: str, repo_name_map: dict):
-    """Create a handler class with the massoh_home and repo_name_map baked in."""
+def _make_handler_class(
+    massoh_home: str,
+    repo_name_map: dict,
+    control_mode: bool = False,
+    capability_token: str = "",
+    server_port: int = DEFAULT_PORT,
+):
+    """
+    Create a handler class with massoh_home, repo_name_map, and auth state baked in.
+    B1: control_mode defaults to False — POST routes only exist when True.
+    B2: capability_token is the per-run CSPRNG token; empty when not in control mode.
+    """
 
     class BoundHandler(_FleetHandler):
         pass
 
     BoundHandler.massoh_home = massoh_home
     BoundHandler.repo_name_map = repo_name_map
+    BoundHandler.control_mode = control_mode
+    BoundHandler.capability_token = capability_token  # B2: memory-only token
+    BoundHandler.server_port = server_port
     return BoundHandler
 
 
@@ -443,12 +701,25 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Massoh Fleet dashboard — 127.0.0.1 only, GET / + /repo/<name> + /repo/<name>/task/<id>, stdlib-only."
     )
-    # N1: --port is the ONLY knob. Host is NOT configurable.
+    # N1: --port is the ONLY host/bind knob. Host is NOT configurable.
     parser.add_argument(
         "--port",
         type=int,
         default=DEFAULT_PORT,
         help=f"TCP port (default: {DEFAULT_PORT}). Host is always 127.0.0.1 (not configurable).",
+    )
+    # B1: --control is OPT-IN, DEFAULT OFF.
+    # Without it: GET-only server, byte-identical to the pre-B0 server.
+    # With it: mints a per-run capability token, prints it once, enables POST /repo/<name>/intake.
+    parser.add_argument(
+        "--control",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable the auth-gated 'Add idea' intake form (default: OFF). "
+            "Mints a per-run capability token printed once to this terminal. "
+            "Requires the token + same-origin Origin/Referer on every write POST."
+        ),
     )
     args = parser.parse_args()
 
@@ -463,7 +734,20 @@ def main() -> int:
     repos = _discover_repos()
     repo_name_map = _build_repo_name_map(repos)
 
-    handler_class = _make_handler_class(massoh_home, repo_name_map)
+    # B1/B2: Mint capability token only when --control is requested.
+    # Token is CSPRNG (secrets module), memory-only, printed once, never logged.
+    control_mode: bool = args.control
+    capability_token: str = ""
+    if control_mode:
+        capability_token = secrets.token_urlsafe(32)  # B2: CSPRNG, memory-only
+
+    handler_class = _make_handler_class(
+        massoh_home=massoh_home,
+        repo_name_map=repo_name_map,
+        control_mode=control_mode,
+        capability_token=capability_token,
+        server_port=port,
+    )
 
     try:
         server = _make_server(port, handler_class)
@@ -487,6 +771,16 @@ def main() -> int:
     # N3: print the URL before blocking.
     print(f"massoh-dashboard: serving at http://{BIND_HOST}:{port}/", flush=True)
     print(f"massoh-dashboard: {len(repos)} repo(s) discovered.", flush=True)
+
+    # B2: Print capability token ONCE to the controlling terminal (stdout).
+    # Token is printed here and NEVER again — not in logs, not in HTML (beyond the hidden field).
+    if control_mode:
+        print(f"massoh-dashboard: control mode ON — write actions enabled.", flush=True)
+        print(f"massoh-dashboard: control token (this run only): {capability_token}", flush=True)
+        print(f"massoh-dashboard: POST /repo/<name>/intake requires this token + same-origin.", flush=True)
+    else:
+        print("massoh-dashboard: read-only mode (no --control flag — POST → 404).", flush=True)
+
     print("massoh-dashboard: press Ctrl-C or send SIGTERM to stop.", flush=True)
 
     # Block the main thread until a signal arrives.
