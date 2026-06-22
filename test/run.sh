@@ -5574,17 +5574,20 @@ check "T-AE-h tick1 x2: exactly 1 NOTIF #L1 block (no double-emit)" \
   MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
   "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
 
-# Capture md5 of NOTIFICATIONS.md after first proceed tick.
-md5_notif_h="$(md5sum '$AEh/NOTIFICATIONS.md' 2>/dev/null | awk '{print $1}')"
+# Capture md5 of NOTIFICATIONS.md BEFORE second deadline tick (real idempotency check).
+md5_notif_h_before="$( cd "$AEh" && find . -name NOTIFICATIONS.md -exec md5sum {} \; 2>/dev/null )"
 
 ( cd "$AEh" && MASSOH_NOW=$(( AEh_DEADLINE + 1 )) \
   MASSOH_HOME="$REPO_ROOT" MASSOH_AGENT_CMD="$FAKE_AE" MASSOH_GATE_CMD=true MASSOH_STANDUP_CMD=true \
   "$CRON_AE" once --run --no-idle-check >/dev/null 2>&1 ) || true
 
+# Capture md5 of NOTIFICATIONS.md AFTER second deadline tick.
+md5_notif_h_after="$( cd "$AEh" && find . -name NOTIFICATIONS.md -exec md5sum {} \; 2>/dev/null )"
+
 check "T-AE-h deadline x2: exactly 1 CLOSE block (no double-proceed)" \
   "[ \"\$(grep -cF '## NOTIF ${AEh_ID}#CLOSE' '$AEh/NOTIFICATIONS.md')\" -eq 1 ]"
-check "T-AE-h deadline x2: NOTIFICATIONS.md stable (md5 identical)" \
-  "[ \"\$(md5sum '$AEh/NOTIFICATIONS.md' | awk '{print \$1}')\" = \"\$(md5sum '$AEh/NOTIFICATIONS.md' | awk '{print \$1}')\" ]"
+check "T-AE-h deadline x2: NOTIFICATIONS.md stable (md5 identical after re-run)" \
+  "[ \"$md5_notif_h_before\" = \"$md5_notif_h_after\" ]"
 
 # ---------------------------------------------------------------------------
 # T-AE-i: AGENT_SYNC [escalation] line emitted per notice; append-only
