@@ -9,6 +9,24 @@ supplies the **project-specific** content the agents enforce literally. Fill eve
 - The global-block markers `<!-- massoh:start` / `<!-- massoh:end -->` and
   `templates/CLAUDE.global-block.md` — the only always-read surface in every repo.
 - `templates/CLAUDE.project.template.md` — the per-repo bootloader.
+- `bin/massoh-cron` — **the autonomy boundary.** As of v0.28.0 this file encodes the timed
+  auto-proceed logic (decide-or-defer). Any change to the eligibility classifier, the never-auto
+  class, the plan-guard predicate, the grace window defaults, or the proceed/hold branch **requires
+  explicit owner sign-off** (same bar as the files above). Owner signed off on the initial
+  implementation (TASK-2026-06-21-autonomy-escalation sign-off #1 and #2, 2026-06-21).
+
+## Autonomy boundary (v0.28.0+)
+`bin/massoh-cron` may auto-proceed on a recommended option **only** when ALL of:
+1. `cron_decide_or_defer=on` in `agent-project/config.yml` (default OFF — opt-in).
+2. The recommended option is `reversible` + `flag_dark` (as asserted in the decision record).
+3. The option is NOT in the `never_auto` class: not a safety-critical-file touch, not
+   irreversible/destructive, not a prod-deploy, not paid spend above `cron_spend_cap_usd` (default 0),
+   not unfreezing a frozen feature.
+4. The option is `on-plan`: record carries `plan_ref=PRODUCT_STRATEGY.md#north-star` + non-empty
+   `plan_rationale` (fail-closed: missing → HELD_BLOCKED).
+5. The grace window (`cron_grace_min`, default 120 min) has elapsed with no owner answer in
+   `DECISIONS.md`.
+Any change to these conditions requires fresh owner sign-off.
 
 ## Prohibited content (the product must never produce)
 - An installer that **overwrites the user's own** `~/.claude/CLAUDE.md`, agents, or skills. Massoh

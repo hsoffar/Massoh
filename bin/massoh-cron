@@ -7,6 +7,8 @@
 #   MASSOH_STANDUP_CMD  (default: massoh standup)    — cadence ceremony, injectable for tests
 #   MASSOH_REVIEW_CMD   (default: massoh review)     — cadence ceremony, injectable for tests
 #   MASSOH_PLAN_CMD     (default: massoh plan)        — cadence ceremony, injectable for tests
+# Decide-or-defer subsystem (v0.28.0, flag cron_decide_or_defer=on to enable):
+#   MASSOH_NOW          (default: date +%s) — injectable Unix-epoch clock for zero-cost testing
 set -euo pipefail
 
 REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -19,6 +21,16 @@ AGENT_CMD="${MASSOH_AGENT_CMD:-claude -p}"
 [ -f "${MASSOH_HOME:-}/lib/verbs/_config.sh" ] && . "${MASSOH_HOME:-}/lib/verbs/_config.sh" || true
 # PC6 call-site 3 of 3 / PC2: read cron_idle_min; integer-validate before use; malformed → default 25.
 _raw_idle="$(massoh_config_get "$REPO/agent-project/config.yml" "cron_idle_min" "25" 2>/dev/null || true)"; case "$_raw_idle" in ''|*[!0-9]*) IDLE_MIN=25 ;; *) IDLE_MIN="$_raw_idle" ;; esac
+
+# ---- Slice 1: decide-or-defer config keys (same parse+validate pattern as cron_idle_min above) ----
+# cron_decide_or_defer: on|off (master flag; anything else → off)
+_raw_dod="$(massoh_config_get "$REPO/agent-project/config.yml" "cron_decide_or_defer" "off" 2>/dev/null || true)"; case "$_raw_dod" in on) DECIDE_OR_DEFER=on ;; *) DECIDE_OR_DEFER=off ;; esac
+# cron_grace_min: integer >= 1 (malformed → 120)
+_raw_grace="$(massoh_config_get "$REPO/agent-project/config.yml" "cron_grace_min" "120" 2>/dev/null || true)"; case "$_raw_grace" in ''|*[!0-9]*|0) GRACE_MIN=120 ;; *) GRACE_MIN="$_raw_grace" ;; esac
+# cron_notify_count: integer in 1..2 (malformed/out-of-range → 2)
+_raw_nc="$(massoh_config_get "$REPO/agent-project/config.yml" "cron_notify_count" "2" 2>/dev/null || true)"; case "$_raw_nc" in 1) NOTIFY_COUNT=1 ;; 2) NOTIFY_COUNT=2 ;; *) NOTIFY_COUNT=2 ;; esac
+# cron_spend_cap_usd: non-negative integer (malformed → 0)
+_raw_cap="$(massoh_config_get "$REPO/agent-project/config.yml" "cron_spend_cap_usd" "0" 2>/dev/null || true)"; case "$_raw_cap" in ''|*[!0-9]*) SPEND_CAP=0 ;; *) SPEND_CAP="$_raw_cap" ;; esac
 
 # Resolve the massoh binary: prefer MASSOH_HOME (set by bin/massoh caller), else derive from script location
 _massoh_bin(){
@@ -79,6 +91,437 @@ Add a real test, run the local gate, open a PR. Do NOT merge. Do NOT touch desig
     "$slug" "$item" "$slug" "$arc" "$grc" > "$rfile"
 }
 
+# =============================================================================
+# Slice 2 & 3: decide-or-defer subsystem
+# Entry point: evaluate_pending_decisions()
+# Called after idle gate, before fan-out. Returns immediately when flag is off.
+# All files are under $REPO; paths:
+#   NOTIFICATIONS.md        — append-only owner-visible notice log
+#   DECISIONS.md            — append-only owner-answer channel
+#   .agent_tasks/cron/decisions.queue — append-only internal record queue
+# =============================================================================
+
+_dod_now(){
+  # Injectable clock: MASSOH_NOW overrides for zero-cost deterministic tests.
+  printf '%s' "${MASSOH_NOW:-$(date +%s)}"
+}
+
+_dod_utc(){
+  # Convert epoch to ISO-8601 UTC. Portable: try GNU date, then python3 fallback.
+  local epoch="$1"
+  date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || python3 -c "import datetime; print(datetime.datetime.utcfromtimestamp($epoch).strftime('%Y-%m-%dT%H:%M:%SZ'))" 2>/dev/null \
+    || printf '%s' "${epoch}Z"
+}
+
+# Seed NOTIFICATIONS.md header if file missing (explain how to answer).
+_dod_seed_notifications(){
+  local f="$REPO/NOTIFICATIONS.md"
+  [ -f "$f" ] && return 0
+  cat > "$f" <<'NOTIF_HDR'
+# NOTIFICATIONS.md — massoh-cron autonomy escalation notices (append-only; never edit a prior block)
+
+This file records owner-escalation notices from the autonomous cron loop (`massoh cron once --run`).
+Each notice block is identified by `decision_id`. To answer, append a row to `DECISIONS.md` (see
+the header in that file for the exact format). The loop checks `DECISIONS.md` on every idle tick.
+
+Do NOT edit or delete prior blocks — this file is append-only. Status changes appear as new
+`## NOTIF <decision_id>#CLOSE` blocks appended below.
+
+---
+NOTIF_HDR
+}
+
+# Seed DECISIONS.md header if file missing.
+_dod_seed_decisions(){
+  local f="$REPO/DECISIONS.md"
+  [ -f "$f" ] && return 0
+  cat > "$f" <<'DEC_HDR'
+# DECISIONS.md — owner answers to autonomous-escalation notices (append-only; never edit/delete a row)
+
+Append a row below to answer a pending decision. The loop checks this file on every idle tick.
+`verdict` must be one of: APPROVE | REJECT | DEFER
+
+| decision_id | verdict | note | ts | by |
+|---|---|---|---|---|
+DEC_HDR
+}
+
+# Check whether a given decision_id has been answered by the owner AFTER open_ts.
+# Returns 0 (true) if answered; prints the verdict on stdout.
+_dod_owner_answered(){
+  local id="$1" open_ts="$2" f="$REPO/DECISIONS.md"
+  [ -f "$f" ] || return 1
+  # Scan the table for the id; pick the LAST matching row; check its ts field >= open_ts.
+  local verdict ts_str ts_epoch
+  local found_verdict="" found_ts=0
+  while IFS='|' read -r _ did verd note ts by _rest 2>/dev/null; do
+    did="${did#"${did%%[![:space:]]*}"}"; did="${did%"${did##*[! ]}"}"
+    verd="${verd#"${verd%%[![:space:]]*}"}"; verd="${verd%"${verd##*[! ]}"}"
+    ts="${ts#"${ts%%[![:space:]]*}"}"; ts="${ts%"${ts##*[! ]}"}"
+    [ "$did" = "$id" ] || continue
+    # Convert ts to epoch for comparison (ISO-8601 UTC)
+    local ep
+    ep="$(date -d "$ts" +%s 2>/dev/null || python3 -c "import datetime; print(int(datetime.datetime.fromisoformat('${ts%Z}').timestamp()))" 2>/dev/null || echo 0)"
+    [ "$ep" -ge "$open_ts" ] || continue
+    found_verdict="$verd"
+    found_ts="$ep"
+  done < <(grep '^|' "$f" 2>/dev/null || true)
+  [ -n "$found_verdict" ] || return 1
+  printf '%s' "$found_verdict"
+  return 0
+}
+
+# Check if NOTIFICATIONS.md already contains a given notif marker (grep-guard for idempotency).
+_dod_notif_exists(){
+  local marker="$1" f="$REPO/NOTIFICATIONS.md"
+  [ -f "$f" ] || return 1
+  grep -qF "## NOTIF $marker" "$f" 2>/dev/null || return 1
+}
+
+# Emit a notification block to NOTIFICATIONS.md and one [escalation] line to AGENT_SYNC.md.
+_dod_emit_notice(){
+  local id="$1" level="$2" ts_now="$3" item_text="$4" decision_text="$5" \
+        recommended="$6" eligibility="$7" plan_ref="$8" deadline_epoch="$9" \
+        on_grace_expiry="${10}" status="${11}"
+  local notif_id="${id}#L${level}"
+  local ts_str; ts_str="$(_dod_utc "$ts_now")"
+  local deadline_str; deadline_str="$(_dod_utc "$deadline_epoch")"
+
+  _dod_seed_notifications
+
+  # Idempotency guard: only emit if not already present.
+  _dod_notif_exists "$notif_id" && return 0
+
+  {
+    printf '\n## NOTIF %s\n' "$notif_id"
+    printf -- '- decision_id: %s\n' "$id"
+    printf -- '- level: %s\n' "$level"
+    printf -- '- ts: %s\n' "$ts_str"
+    printf -- '- item: "%s"\n' "$item_text"
+    printf -- '- decision: "%s"\n' "$decision_text"
+    printf -- '- recommended: "%s"\n' "$recommended"
+    printf -- '- eligibility: %s\n' "$eligibility"
+    printf -- '- plan_ref: %s\n' "$plan_ref"
+    printf -- '- deadline: %s\n' "$deadline_str"
+    printf -- '- on_grace_expiry: %s\n' "$on_grace_expiry"
+    printf -- '- status: %s\n' "$status"
+    printf -- '- answer_how: "append a row to DECISIONS.md keyed by decision_id (see header)"\n'
+  } >> "$REPO/NOTIFICATIONS.md"
+
+  # One [escalation] line into AGENT_SYNC.md (append-only).
+  printf '\n[escalation] NOTIF %s · level=%s · item="%s" · on_grace_expiry=%s · ts=%s\n' \
+    "$id" "$level" "$item_text" "$on_grace_expiry" "$ts_str" >> "$REPO/AGENT_SYNC.md" 2>/dev/null || true
+}
+
+# Append a closing block to NOTIFICATIONS.md for a given decision_id.
+_dod_close_record(){
+  local id="$1" final_status="$2" reason="$3" ts_now="$4"
+  local close_marker="${id}#CLOSE"
+  local ts_str; ts_str="$(_dod_utc "$ts_now")"
+
+  _dod_seed_notifications
+
+  # Idempotency: only close once.
+  _dod_notif_exists "$close_marker" && return 0
+
+  {
+    printf '\n## NOTIF %s\n' "$close_marker"
+    printf -- '- decision_id: %s\n' "$id"
+    printf -- '- final_status: %s\n' "$final_status"
+    printf -- '- reason: %s\n' "$reason"
+    printf -- '- closed_at: %s\n' "$ts_str"
+  } >> "$REPO/NOTIFICATIONS.md"
+}
+
+# Check if a record is already closed (CLOSE block present).
+_dod_is_closed(){
+  local id="$1"
+  _dod_notif_exists "${id}#CLOSE"
+}
+
+# Compute eligibility string and on_grace_expiry for a decision record.
+# Reads fields from the record line. Returns: sets _ELIG, _NEVER_AUTO_REASON, _ON_GRACE.
+_dod_classify(){
+  local reversible="$1" flag_dark="$2" never_auto_input="$3" est_spend="$4" plan_ref="$5" plan_rationale="$6"
+
+  # never_auto check — caller passes "safety-file|irreversible|cost|prod-deploy|frozen" or ""
+  # Also check spend cap.
+  local never_reason="$never_auto_input"
+
+  # Spend cap check (fail-closed: missing/non-numeric est_spend → over-cap).
+  if [ -z "$never_reason" ]; then
+    case "$est_spend" in
+      ''|*[!0-9]*)
+        never_reason="cost(missing-estimate)"
+        ;;
+      *)
+        if [ "$est_spend" -gt "$SPEND_CAP" ]; then
+          never_reason="cost(est=${est_spend}>cap=${SPEND_CAP})"
+        fi
+        ;;
+    esac
+  fi
+
+  if [ -n "$never_reason" ]; then
+    _ELIG="NEVER-AUTO($never_reason)"
+    _NEVER_AUTO_REASON="$never_reason"
+    _ON_GRACE="HOLD-FOREVER"
+    return 0
+  fi
+
+  # Must be reversible + flag_dark (fail-closed if absent).
+  if [ "$reversible" != "true" ] || [ "$flag_dark" != "true" ]; then
+    _ELIG="NEVER-AUTO(not-reversible-or-not-flag-dark)"
+    _NEVER_AUTO_REASON="not-reversible-or-not-flag-dark"
+    _ON_GRACE="HOLD-FOREVER"
+    return 0
+  fi
+
+  _ELIG="reversible+flag-dark"
+  _NEVER_AUTO_REASON=""
+  _ON_GRACE="AUTO-PROCEED"  # preliminary; plan-guard may override below
+}
+
+# Plan-guard check. Sets _ON_PLAN=true|false and _PLAN_FAIL_REASON.
+# Fail-closed: missing/empty plan_ref or anchor not found → off-plan.
+_dod_plan_guard(){
+  local plan_ref="$1" plan_rationale="$2"
+  local anchor_file="$REPO/agent-project/PRODUCT_STRATEGY.md"
+
+  # Must reference the canonical anchor.
+  case "$plan_ref" in
+    *PRODUCT_STRATEGY.md#north-star*|*PRODUCT_STRATEGY.md#North-star*)
+      : ;;
+    *)
+      _ON_PLAN=false
+      _PLAN_FAIL_REASON="plan_ref does not name PRODUCT_STRATEGY.md#north-star (got: ${plan_ref:-empty})"
+      return 0
+      ;;
+  esac
+
+  # Anchor section must actually exist in the file.
+  if ! grep -qiE '^## North-star' "$anchor_file" 2>/dev/null; then
+    _ON_PLAN=false
+    _PLAN_FAIL_REASON="anchor '## North-star' not found in PRODUCT_STRATEGY.md"
+    return 0
+  fi
+
+  # plan_rationale must be non-empty.
+  if [ -z "$plan_rationale" ]; then
+    _ON_PLAN=false
+    _PLAN_FAIL_REASON="plan_rationale is empty"
+    return 0
+  fi
+
+  _ON_PLAN=true
+  _PLAN_FAIL_REASON=""
+}
+
+# Parse a single decisions.queue record line into named variables.
+# Format (tab-separated, 13 fields; empty fields are valid):
+#   id \t open_ts \t item \t decision \t recommended \t reversible \t flag_dark \t never_auto \t est_spend \t plan_ref \t plan_rationale \t notices_sent \t deadline
+# NOTE: Use awk -F'\t' to parse — bash `read` collapses consecutive tabs (skips empty fields).
+_dod_parse_qrec(){
+  local line="$1"
+  # Require exactly 13 tab-separated fields; bail if fewer (malformed line).
+  local nf; nf=$(printf '%s' "$line" | awk -F'\t' '{print NF}')
+  [ "${nf:-0}" -eq 13 ] 2>/dev/null || return 1
+  _QR_ID=$(           printf '%s' "$line" | awk -F'\t' '{print $1}')
+  _QR_OPEN_TS=$(      printf '%s' "$line" | awk -F'\t' '{print $2}')
+  _QR_ITEM=$(         printf '%s' "$line" | awk -F'\t' '{print $3}')
+  _QR_DECISION=$(     printf '%s' "$line" | awk -F'\t' '{print $4}')
+  _QR_RECOMMENDED=$(  printf '%s' "$line" | awk -F'\t' '{print $5}')
+  _QR_REVERSIBLE=$(   printf '%s' "$line" | awk -F'\t' '{print $6}')
+  _QR_FLAG_DARK=$(    printf '%s' "$line" | awk -F'\t' '{print $7}')
+  _QR_NEVER_AUTO=$(   printf '%s' "$line" | awk -F'\t' '{print $8}')
+  _QR_EST_SPEND=$(    printf '%s' "$line" | awk -F'\t' '{print $9}')
+  _QR_PLAN_REF=$(     printf '%s' "$line" | awk -F'\t' '{print $10}')
+  _QR_PLAN_RATIONALE=$(printf '%s' "$line" | awk -F'\t' '{print $11}')
+  _QR_NOTICES_SENT=$( printf '%s' "$line" | awk -F'\t' '{print $12}')
+  _QR_DEADLINE=$(     printf '%s' "$line" | awk -F'\t' '{print $13}')
+}
+
+# Rewrite decisions.queue: update the notices_sent field for a given id.
+# Append-only contract is honored by appending a new "update" line prefixed with "U\t<id>\t<notices>".
+# The evaluator uses the LAST matching update for a given id.
+# (We use a separate update-log pattern instead of rewriting, to stay append-only.)
+_dod_record_notices_sent(){
+  local id="$1" notices="$2" queue="$REPO/.agent_tasks/cron/decisions.queue"
+  printf 'U\t%s\t%s\n' "$id" "$notices" >> "$queue"
+}
+
+# Read the effective notices_sent for an id (last "U\t<id>\t<n>" wins; else original record value).
+_dod_get_notices_sent(){
+  local id="$1" queue="$REPO/.agent_tasks/cron/decisions.queue"
+  local last_n=""
+  [ -f "$queue" ] || { printf '0'; return 0; }
+  while IFS=$'\t' read -r tag qid n _rest; do
+    [ "$tag" = "U" ] && [ "$qid" = "$id" ] && last_n="$n"
+  done < "$queue"
+  [ -n "$last_n" ] && printf '%s' "$last_n" || printf '0'
+}
+
+# Main decision evaluator — runs once per idle tick, after idle gate, before fan-out.
+evaluate_pending_decisions(){
+  # Master flag guard: if off, this is a no-op (byte-identical to pre-v0.28.0 behavior).
+  [ "$DECIDE_OR_DEFER" = on ] || return 0
+
+  local queue="$REPO/.agent_tasks/cron/decisions.queue"
+  [ -f "$queue" ] || return 0
+
+  local now; now="$(_dod_now)"
+
+  # Walk each "original" record line in the queue (lines NOT starting with "U\t").
+  while IFS= read -r line; do
+    # Skip update lines and blank lines.
+    case "$line" in
+      U$'\t'*|"") continue ;;
+    esac
+
+    _dod_parse_qrec "$line" || continue
+
+    local id="$_QR_ID"
+    local open_ts="$_QR_OPEN_TS"
+    local item_text="$_QR_ITEM"
+    local decision_text="$_QR_DECISION"
+    local recommended="$_QR_RECOMMENDED"
+    local reversible="$_QR_REVERSIBLE"
+    local flag_dark="$_QR_FLAG_DARK"
+    local never_auto="$_QR_NEVER_AUTO"
+    local est_spend="$_QR_EST_SPEND"
+    local plan_ref="$_QR_PLAN_REF"
+    local plan_rationale="$_QR_PLAN_RATIONALE"
+    local deadline="$_QR_DEADLINE"
+
+    # Skip already-closed records.
+    _dod_is_closed "$id" && continue
+
+    # Effective notices_sent (last update wins).
+    local notices_sent; notices_sent="$(_dod_get_notices_sent "$id")"
+    # Prefer queue-record value if no updates yet.
+    case "$notices_sent" in
+      ''|0) notices_sent="${_QR_NOTICES_SENT:-0}" ;;
+    esac
+
+    # ── Owner-answer check (any non-terminal state) ──────────────────────────
+    local verdict
+    if verdict="$(_dod_owner_answered "$id" "$open_ts" 2>/dev/null)"; then
+      _dod_close_record "$id" "RESOLVED_BY_OWNER" "verdict=${verdict}" "$now"
+      say "massoh-cron: [escalation] $id → RESOLVED_BY_OWNER ($verdict)"
+      continue
+    fi
+
+    # ── Classify eligibility (re-evaluated each tick, never cached) ──────────
+    local _ELIG="" _NEVER_AUTO_REASON="" _ON_GRACE=""
+    _dod_classify "$reversible" "$flag_dark" "$never_auto" "$est_spend" "$plan_ref" "$plan_rationale"
+    local elig="$_ELIG" on_grace="$_ON_GRACE" never_reason="$_NEVER_AUTO_REASON"
+
+    # ── Plan guard ───────────────────────────────────────────────────────────
+    local _ON_PLAN="" _PLAN_FAIL_REASON=""
+    _dod_plan_guard "$plan_ref" "$plan_rationale"
+    local on_plan="$_ON_PLAN" plan_fail_reason="$_PLAN_FAIL_REASON"
+
+    # Adjust on_grace for plan-guard failure (overrides AUTO-PROCEED).
+    if [ "$on_plan" != "true" ] && [ "$on_grace" = "AUTO-PROCEED" ]; then
+      on_grace="HOLD-FOREVER"
+    fi
+
+    # ── Emit notice — one per tick per record, up to NOTIFY_COUNT, idempotently ─
+    # Emit the NEXT notice level if still below NOTIFY_COUNT.
+    if [ "$notices_sent" -lt "$NOTIFY_COUNT" ]; then
+      local next_level=$(( notices_sent + 1 ))
+      _dod_emit_notice \
+        "$id" "$next_level" "$now" "$item_text" "$decision_text" \
+        "$recommended" "$elig" "$plan_ref" "$deadline" \
+        "$on_grace" "AWAITING_OWNER"
+      notices_sent="$next_level"
+      _dod_record_notices_sent "$id" "$notices_sent"
+    fi
+
+    # ── At-deadline evaluation ───────────────────────────────────────────────
+    if [ "$now" -ge "$deadline" ]; then
+      # Ensure all notices have been emitted before proceeding/holding.
+      # (Normally, by the time the deadline passes, notices_sent == NOTIFY_COUNT
+      # from prior ticks. If somehow not, emit the remaining ones now.)
+      while [ "$notices_sent" -lt "$NOTIFY_COUNT" ]; do
+        local next_level=$(( notices_sent + 1 ))
+        _dod_emit_notice \
+          "$id" "$next_level" "$now" "$item_text" "$decision_text" \
+          "$recommended" "$elig" "$plan_ref" "$deadline" \
+          "$on_grace" "AWAITING_OWNER"
+        notices_sent="$next_level"
+        _dod_record_notices_sent "$id" "$notices_sent"
+      done
+
+      # Re-evaluate eligibility + plan-guard at the deadline (never cached).
+      _ELIG=""; _NEVER_AUTO_REASON=""; _ON_GRACE=""
+      _dod_classify "$reversible" "$flag_dark" "$never_auto" "$est_spend" "$plan_ref" "$plan_rationale"
+      local final_elig="$_ELIG" final_on_grace="$_ON_GRACE" final_never_reason="$_NEVER_AUTO_REASON"
+
+      _ON_PLAN=""; _PLAN_FAIL_REASON=""
+      _dod_plan_guard "$plan_ref" "$plan_rationale"
+      local final_on_plan="$_ON_PLAN" final_plan_fail_reason="$_PLAN_FAIL_REASON"
+
+      if [ "$final_on_grace" = "AUTO-PROCEED" ] && [ "$final_on_plan" = "true" ]; then
+        # PROCEED: record what + why.
+        _dod_close_record "$id" "PROCEEDED" \
+          "auto-proceeded after grace=${GRACE_MIN}min, no owner reply; recommended=${recommended}; plan_ref=${plan_ref}" \
+          "$now"
+        say "massoh-cron: [escalation] $id → PROCEEDED (auto after grace, recommended: $recommended)"
+      else
+        # HELD_BLOCKED: degrade safely.
+        local hold_reason
+        if [ "$final_on_plan" != "true" ]; then
+          hold_reason="off-plan: $final_plan_fail_reason"
+        else
+          hold_reason="never-auto: $final_never_reason"
+        fi
+        _dod_close_record "$id" "HELD_BLOCKED" "$hold_reason" "$now"
+        say "massoh-cron: [escalation] $id → HELD_BLOCKED ($hold_reason)"
+      fi
+    fi
+
+  done < "$queue"
+}
+
+# Called from the parent serialization loop when a worker reports status=needs-decision.
+# Appends a new record to decisions.queue. Idempotent: if id already in queue, skip.
+_dod_enqueue_decision(){
+  local id="$1" open_ts="$2" item="$3" decision="$4" recommended="$5" \
+        reversible="$6" flag_dark="$7" never_auto="$8" est_spend="$9" \
+        plan_ref="${10}" plan_rationale="${11}"
+
+  mkdir -p "$REPO/.agent_tasks/cron"
+  _dod_seed_notifications
+  _dod_seed_decisions
+
+  local queue="$REPO/.agent_tasks/cron/decisions.queue"
+  local deadline=$(( open_ts + GRACE_MIN * 60 ))
+
+  # Idempotency: if this id already has a queue record, skip.
+  if [ -f "$queue" ] && grep -qF "$id" "$queue" 2>/dev/null; then
+    return 0
+  fi
+
+  # Append: tab-separated record line.
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$id" "$open_ts" "$item" "$decision" "$recommended" \
+    "$reversible" "$flag_dark" "$never_auto" "$est_spend" \
+    "$plan_ref" "$plan_rationale" "0" "$deadline" >> "$queue"
+}
+
+# Generate a decision id: AESC-<UTC>-<4hex>
+_dod_make_id(){
+  local ts_str; ts_str="$(date -u +%Y%m%dT%H%MZ 2>/dev/null || printf 'UNKNOWNZ')"
+  local rand; rand="$(od -A n -N 2 -t x1 /dev/urandom 2>/dev/null | tr -d ' \n' | cut -c1-4 || printf '%04x' $RANDOM)"
+  printf 'AESC-%s-%s' "$ts_str" "$rand"
+}
+
+# =============================================================================
+# End of decide-or-defer subsystem
+# =============================================================================
+
 cmd_once(){
   local mode=dry parallel=1 automerge=0 period_days=7 no_standup=0 every="30m"
   while [ $# -gt 0 ]; do case "$1" in
@@ -93,6 +536,10 @@ cmd_once(){
   local every_mins; case "$every" in *m) every_mins="${every%m}";; *h) every_mins=$(( ${every%h} * 60 ));; *) every_mins=30;; esac
 
   if owner_active; then say "massoh-cron: owner active (< ${IDLE_MIN}m) — skipping tick."; return 0; fi
+
+  # ---- Slice 2: pre-tick decision evaluator (after idle gate, before fan-out) ----
+  # When DECIDE_OR_DEFER=off this is a no-op: loop is byte-identical to pre-v0.28.0.
+  evaluate_pending_decisions
 
   local items=(); while IFS= read -r line; do [ -n "$line" ] && items+=("$line"); done < <(backlog_todos | head -n "$parallel")
   [ "${#items[@]}" -eq 0 ] && { say "massoh-cron: no unblocked TODO — nothing to do."; return 0; }
@@ -132,9 +579,40 @@ cmd_once(){
   for r in "$RESULTS"/*.result; do
     [ -f "$r" ] || continue
     local slug item branch arc grc st; slug=""; item=""; branch=""; arc=""; grc=""; st=""
-    while IFS='=' read -r k v; do case "$k" in slug)slug=$v;;item)item=$v;;branch)branch=$v;;agent_rc)arc=$v;;gate_rc)grc=$v;;status)st=$v;; esac; done < "$r"
+    # Additional fields for decide-or-defer (slice 2).
+    local dod_status="" dod_decision="" dod_recommended="" dod_reversible="" dod_flag_dark=""
+    local dod_never_auto="" dod_est_spend="" dod_plan_ref="" dod_plan_rationale=""
+    while IFS='=' read -r k v; do
+      case "$k" in
+        slug)            slug=$v ;;
+        item)            item=$v ;;
+        branch)          branch=$v ;;
+        agent_rc)        arc=$v ;;
+        gate_rc)         grc=$v ;;
+        status)          st=$v ;;
+        dod_decision)    dod_decision=$v ;;
+        dod_recommended) dod_recommended=$v ;;
+        dod_reversible)  dod_reversible=$v ;;
+        dod_flag_dark)   dod_flag_dark=$v ;;
+        dod_never_auto)  dod_never_auto=$v ;;
+        dod_est_spend)   dod_est_spend=$v ;;
+        dod_plan_ref)    dod_plan_ref=$v ;;
+        dod_plan_rationale) dod_plan_rationale=$v ;;
+      esac
+    done < "$r"
+    # Check if status field contains needs-decision.
+    case "$st" in *needs-decision*) dod_status="needs-decision" ;; esac
     cp "$r" "$REPO/.agent_tasks/cron/$ts-$slug.result" 2>/dev/null || true
-    if [ "$st" = worked ]; then
+    if [ "$dod_status" = "needs-decision" ] && [ "$DECIDE_OR_DEFER" = on ]; then
+      # Enqueue this decision instead of marking done.
+      local dod_id; dod_id="$(_dod_make_id)"
+      local dod_open_ts; dod_open_ts="$(_dod_now)"
+      _dod_enqueue_decision \
+        "$dod_id" "$dod_open_ts" "$item" "$dod_decision" "$dod_recommended" \
+        "${dod_reversible:-false}" "${dod_flag_dark:-false}" "${dod_never_auto:-}" \
+        "${dod_est_spend:-}" "${dod_plan_ref:-}" "${dod_plan_rationale:-}"
+      block+="- $item → needs-decision id=$dod_id"$'\n'
+    elif [ "$st" = worked ]; then
       mark_done "$item"
       local merged=no
       if [ "$automerge" = 1 ] && [ "$grc" = 0 ]; then
@@ -220,6 +698,7 @@ cmd_status(){
   say "  repo:       $REPO"
   say "  agent cmd:  $AGENT_CMD"
   say "  idle gate:  ${IDLE_MIN}m"
+  say "  decide-or-defer: ${DECIDE_OR_DEFER} (grace=${GRACE_MIN}m, notify=${NOTIFY_COUNT}, spend_cap=\$${SPEND_CAP})"
   say "  scheduled:  $(command -v crontab >/dev/null && crontab -l 2>/dev/null | grep -qF 'massoh cron once' && echo yes || echo no)"
   say "  TODOs:      $(backlog_todos | wc -l | tr -d ' ')"
 }

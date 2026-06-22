@@ -11,6 +11,34 @@ massoh doctor      # verify the install matches the manifest; warns if a newer v
 massoh version     # show the installed version + clone SHA
 ```
 
+## [0.28.0] - 2026-06-21
+
+### Added
+- **Decide-or-defer subsystem (v0.28.0) — opt-in, default OFF.**
+  Adds a timed-escalation tier + long-term-plan guard to the autonomous cron loop
+  (`bin/massoh-cron`). When `cron_decide_or_defer: on` in `agent-project/config.yml`:
+  - Workers may report `status=needs-decision` in their result file; the parent loop
+    enqueues the decision with a configurable grace window (`cron_grace_min`, default 120 min).
+  - The owner receives up to `cron_notify_count` (default 2) notices in `NOTIFICATIONS.md`
+    (+ one `[escalation]` line per notice in `AGENT_SYNC.md`) and answers via `DECISIONS.md`.
+  - At deadline: **reversible + flag-dark + on-plan + not-never-auto** options auto-proceed;
+    everything else stays `HELD_BLOCKED` forever.
+  - **Never-auto class** (always HELD): safety-critical-file touch, irreversible/destructive op,
+    production deploy, paid spend > `cron_spend_cap_usd` (default `0`), frozen feature.
+  - **Plan guard** (fail-closed): decision record must carry `plan_ref: PRODUCT_STRATEGY.md#north-star`
+    + non-empty `plan_rationale`; missing/empty/anchor-not-found → `HELD_BLOCKED`.
+  - All three runtime artifacts (`NOTIFICATIONS.md`, `DECISIONS.md`,
+    `.agent_tasks/cron/decisions.queue`) are **append-only** and gitignored.
+  - **Flag default OFF = byte-identical loop to v0.27.1.** No behavior change for existing users.
+  - `bin/massoh-cron` is now designated safety-critical in `NON_NEGOTIABLES.md`; edits to the
+    autonomy boundary require fresh owner sign-off.
+  - New config keys: `cron_decide_or_defer`, `cron_grace_min`, `cron_notify_count`,
+    `cron_spend_cap_usd` (all in `agent-project/config.yml`).
+  - `docs/AUTONOMOUS_CRON.md` updated to document the real new subsystem (prior step-5 text
+    described a code path that did not exist; now documents the actual implementation).
+  - `MASSOH_NOW` injectable clock for zero-cost deterministic tests.
+  - Test suite: 10 new T-AE checks (T-AE-a through T-AE-j); total suite ≥ 695 checks.
+
 ## [0.27.1] - 2026-06-21
 
 ### Fixed
